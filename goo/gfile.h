@@ -16,22 +16,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #ifdef VMS
-#  include "vms_dirent.h"
-#elif HAVE_DIRENT_H
-#  include <dirent.h>
-#  define NAMLEN(dirent) strlen((dirent)->d_name)
+#include "vms_dirent.h"
 #else
-#  define dirent direct
-#  define NAMLEN(dirent) (dirent)->d_namlen
-#  if HAVE_SYS_NDIR_H
-#    include <sys/ndir.h>
-#  endif
-#  if HAVE_SYS_DIR_H
-#    include <sys/dir.h>
-#  endif
-#  if HAVE_NDIR_H
-#    include <ndir.h>
-#  endif
+#include <dirent.h>
 #endif
 #include <gtypes.h>
 

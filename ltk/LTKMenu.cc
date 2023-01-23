@@ -25,16 +25,6 @@
 #include <LTKBorder.h>
 #include <LTKMenu.h>
 
-#ifdef XlibSpecificationRelease
-#if XlibSpecificationRelease < 5
-typedef char *XPointer;
-#endif
-#else
-typedef char *XPointer;
-#endif
-
-//------------------------------------------------------------------------
-
 #define horizBorder  2
 #define horizSpace  12
 #define arrowSize   10
@@ -339,7 +329,7 @@ void LTKMenu::buttonRelease(int mx, int my, int button, GBool click) {
   }
 }
 
-void LTKMenu::mouseMove(int mx, int my, int btn) {
+void LTKMenu::mouseMove(int mx, int my, int pressedBtn) {
   int y1, i, j;
 
   y1 = ltkBorderWidth;
@@ -390,7 +380,7 @@ void LTKMenu::mouseMove(int mx, int my, int btn) {
     }
   }
   if (j < 0 && parent)
-    parent->mouseMove(x + mx - parent->x, y + my - parent->y, btn);
+    parent->mouseMove(x + mx - parent->x, y + my - parent->y, pressedBtn);
 }
 
 //------------------------------------------------------------------------

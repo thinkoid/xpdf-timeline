@@ -18,7 +18,7 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
-#ifdef HAVE_LIBXPM
+#ifndef NO_XPM
 #include "X11/xpm.h"
 #endif
 #include <LTKConfig.h>
@@ -37,7 +37,7 @@ typedef char *XPointer;
 typedef char *XPointer;
 #endif
 
-static Bool isExposeEvent(Display *display, XEvent *e, XPointer w);
+static Bool isExposeEvent(Display *display, XEvent *e, XPointer win);
 
 LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
 		     char **iconData1, char *defaultWidgetName,
@@ -69,7 +69,6 @@ LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
   xwin = None;
   eventMask = ExposureMask | StructureNotifyMask | VisibilityChangeMask |
               ButtonPressMask | ButtonReleaseMask | KeyPressMask;
-  installCmap = gFalse;
   fgGC = bgGC = brightGC = darkGC = xorGC = None;
   fontStruct = NULL;
   next = NULL;
@@ -77,6 +76,8 @@ LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
 }
 
 LTKWindow::~LTKWindow() {
+  XEvent event;
+
   if (xwin) {
     XFreeFont(display, fontStruct);
     XFreeGC(display, fgGC);
@@ -84,10 +85,10 @@ LTKWindow::~LTKWindow() {
     XFreeGC(display, brightGC);
     XFreeGC(display, darkGC);
     XFreeGC(display, xorGC);
-    if (installCmap)
-      XFreeColormap(display, colormap);
     XUnmapWindow(display, xwin);
     XDestroyWindow(display, xwin);
+    XSync(display, False);
+    while (XCheckWindowEvent(display, xwin, 0xffffffff, &event)) ;
   }
   app->setGrabWin(NULL);
   app->delWindow(this);
@@ -120,6 +121,16 @@ LTKWidget *LTKWindow::delWidget(LTKWidget *widget) {
     return w2;
   }
   return NULL;
+}
+
+LTKWidget *LTKWindow::findWidget(Window xwin1) {
+  LTKWidget *widget;
+
+  for (widget = widgets; widget; widget = widget->getNext()) {
+    if (widget->getXWindow() == xwin1)
+      break;
+  }
+  return widget;
 }
 
 LTKWidget *LTKWindow::findWidget(char *name) {
@@ -162,7 +173,6 @@ GBool LTKWindow::checkFills(char **err) {
 
 void LTKWindow::layout(int x, int y, int width1, int height1) {
   XColor bgXcol;
-  XColor xcol;
   XGCValues gcValues;
   int minWidth, minHeight;
   int width2, height2;
@@ -171,7 +181,6 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   XWMHints *wmHints;
   XClassHint *classHints;
   XTextProperty windowName, iconName;
-  Atom protocol;
   GBool newWin;
 
   // create window and GC's so widgets can use font info, etc.
@@ -186,7 +195,6 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
     xwin = XCreateSimpleWindow(display, RootWindow(display, screenNum),
 			       (x < 0) ? 0 : x, (y < 0) ? 0 : y, 1, 1, 0,
 			       fgColor, bgColor);
-    app->registerXWindow(xwin, this, NULL);
     XSelectInput(display, xwin, eventMask);
     gcValues.foreground = fgColor;
     gcValues.background = bgColor;
@@ -222,17 +230,6 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
 		      GCForeground | GCBackground | GCLineWidth | GCLineStyle |
 		      GCGraphicsExposures | GCFunction,
 		      &gcValues);
-    colormap = DefaultColormap(display, screenNum);
-    if (installCmap) {
-      // ensure that BlackPixel and WhitePixel are reserved in the
-      // new colormap
-      xcol.red = xcol.green = xcol.blue = 0;
-      XAllocColor(display, colormap, &xcol);
-      xcol.red = xcol.green = xcol.blue = 65535;
-      XAllocColor(display, colormap, &xcol);
-      colormap = XCopyColormapAndFree(display, colormap);
-      XSetWindowColormap(display, xwin, colormap);
-    }
   } else {
     newWin = gFalse;
   }
@@ -258,7 +255,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   // finish the layout and create the widget subwindows
   box->layout3();
 
-  // set window properties and protocols
+  // set window properties
   if (newWin) {
     sizeHints = XAllocSizeHints();
     wmHints = XAllocWMHints();
@@ -280,7 +277,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       wmHints->input = True;
       wmHints->initial_state = NormalState;
       wmHints->flags = InputHint | StateHint;
-#ifdef HAVE_LIBXPM
+#ifndef NO_XPM
       if (iconData) {
 	if (XpmCreatePixmapFromData(display, xwin, iconData,
 				    &wmHints->icon_pixmap, NULL, NULL) ==
@@ -293,8 +290,6 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       XSetWMProperties(display, xwin, &windowName, &iconName,
 		       NULL, 0, sizeHints, wmHints, classHints);
     }
-    protocol = XInternAtom(display, "WM_DELETE_WINDOW", False);
-    XSetWMProtocols(display, xwin, &protocol, 1);
   }
 
   // call layout callback
@@ -346,13 +341,12 @@ void LTKWindow::map() {
 
 static Bool isExposeEvent(Display *display, XEvent *e, XPointer w) {
   LTKWindow *win;
-  LTKWidget *widget;
   Window xwin;
 
   win = (LTKWindow *)w;
-  xwin = e->xany.window;
+  xwin = e->xexpose.window;
   return e->type == Expose &&
-         win->getApp()->findWindow(xwin, &widget) == win;
+	 (win->getXWindow() == xwin || win->findWidget(xwin));
 }
 
 void LTKWindow::redraw() {

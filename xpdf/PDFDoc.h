@@ -88,7 +88,7 @@ public:
 
 private:
 
-  void getLinks(int page);
+  Links *getLinks(int page);
 
   GString *fileName;
   FILE *file;

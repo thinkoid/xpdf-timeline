@@ -354,10 +354,8 @@ LinkUnknown::~LinkUnknown() {
 
 Link::Link(Dict *dict) {
   Object obj1, obj2, obj3, obj4;
-  double t;
 
   action = NULL;
-  ok = gFalse;
 
   // get rectangle
   if (!dict->lookup("Rect", &obj1)->isArray()) {
@@ -389,26 +387,19 @@ Link::Link(Dict *dict) {
   y2 = obj2.getNum();
   obj2.free();
   obj1.free();
-  if (x1 > x2) {
-    t = x1;
-    x1 = x2;
-    x2 = t;
-  }
-  if (y1 > y2) {
-    t = y1;
-    y1 = y2;
-    y2 = t;
-  }
 
   // get border
-  borderW = 0;
-  if (!dict->lookup("Border", &obj1)->isNull()) {
-    if (obj1.isArray() && obj1.arrayGet(2, &obj2)->isNum())
-      borderW = obj2.getNum();
-    else
-      error(-1, "Bad annotation border");
-    obj2.free();
+  dict->lookup("Border", &obj1);
+  if (!obj1.isArray()) {
+    error(-1, "Annotation border is wrong type");
+    goto err2;
   }
+  if (!obj1.arrayGet(2, &obj2)->isNum()) {
+    error(-1, "Bad annotation border");
+    goto err1;
+  }
+  borderW = obj2.getNum();
+  obj2.free();
   obj1.free();
 
   // look for destination
@@ -465,8 +456,10 @@ Link::Link(Dict *dict) {
   obj1.free();
 
   // check for bad action
-  if (action && action->isOk())
-    ok = gTrue;
+  if (action && !action->isOk()) {
+    delete action;
+    action = NULL;
+  }
 
   return;
 
@@ -474,6 +467,8 @@ Link::Link(Dict *dict) {
   obj2.free();
  err2:
   obj1.free();
+  x1 = y1 = 1;
+  x2 = y2 = 0;
 }
 
 Link::~Link() {
@@ -486,7 +481,6 @@ Link::~Link() {
 //------------------------------------------------------------------------
 
 Links::Links(Object *annots) {
-  Link *link;
   Object obj1, obj2;
   int size;
   int i;
@@ -497,18 +491,13 @@ Links::Links(Object *annots) {
 
   if (annots->isArray()) {
     for (i = 0; i < annots->arrayGetLength(); ++i) {
-      if (annots->arrayGet(i, &obj1)->isDict()) {
+      if (annots->arrayGet(i, &obj1)->isDict("Annot")) {
 	if (obj1.dictLookup("Subtype", &obj2)->isName("Link")) {
-	  link = new Link(obj1.getDict());
-	  if (link->isOk()) {
-	    if (numLinks >= size) {
-	      size += 16;
-	      links = (Link **)grealloc(links, size * sizeof(Link *));
-	    }
-	    links[numLinks++] = link;
-	  } else {
-	    delete link;
+	  if (numLinks >= size) {
+	    size += 16;
+	    links = (Link **)grealloc(links, size * sizeof(Link *));
 	  }
+	  links[numLinks++] = new Link(obj1.getDict());
 	}
 	obj2.free();
       }

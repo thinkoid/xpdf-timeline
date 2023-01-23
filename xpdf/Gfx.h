@@ -42,8 +42,7 @@ enum TchkType {
   tchkString,			// string
   tchkName,			// name
   tchkArray,			// array
-  tchkProps,			// properties (dictionary or name)
-  tchkSCN,			// scn/SCN args (number of name)
+  tchkVarNum,			// variable number of numbers
   tchkNone			// used to avoid empty initializer lists
 };
 
@@ -115,8 +114,6 @@ private:
   void opSetStrokeColorSpace(Object args[], int numArgs);
   void opSetFillColor(Object args[], int numArgs);
   void opSetStrokeColor(Object args[], int numArgs);
-  void opSetFillColorN(Object args[], int numArgs);
-  void opSetStrokeColorN(Object args[], int numArgs);
 
   // path segment operators
   void opMoveTo(Object args[], int numArgs);
@@ -187,11 +184,6 @@ private:
   // compatibility operators
   void opBeginIgnoreUndef(Object args[], int numArgs);
   void opEndIgnoreUndef(Object args[], int numArgs);
-
-  // marked content operators
-  void opBeginMarkedContent(Object args[], int numArgs);
-  void opEndMarkedContent(Object args[], int numArgs);
-  void opMarkPoint(Object args[], int numArgs);
 };
 
 #endif

@@ -9,7 +9,7 @@
 //
 //========================================================================
 
-#define VERSION "0.7a"
+#define VERSION "0.7"
 
 #include <stdio.h>
 #include <stdlib.h>

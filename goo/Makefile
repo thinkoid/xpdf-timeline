@@ -44,50 +44,14 @@ depend:
 #----- dependences -----
 
 GString.o: GString.cc \
- \
- \
- \
- \
- \
  GString.h
-gmempp.o: gmempp.cc gmem.h \
- \
- 
+gmempp.o: gmempp.cc gmem.h
 gfile.o: gfile.cc \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
- \
  GString.h gfile.h \
  gtypes.h
 gmem.o: gmem.c \
- \
- \
- \
- \
- \
  gmem.h
 parseargs.o: parseargs.c \
- \
- \
- \
- \
- \
- \
  parseargs.h gtypes.h
 cover.o: cover.c \
- \
- \
- \
  gmem.h cover.h

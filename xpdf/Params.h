@@ -9,6 +9,9 @@
 #ifndef PARAMS_H
 #define PARAMS_H
 
+// Size of RGB color cube.
+extern int rgbCubeSize;
+
 // Print commands as they're executed.
 extern GBool printCommands;
 

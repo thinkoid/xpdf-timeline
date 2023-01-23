@@ -67,13 +67,6 @@ private:
 #define fontItalic     (1 << 6)
 #define fontBold       (1 << 18)
 
-enum GfxFontType {
-  fontUnknownType,
-  fontType1,
-  fontType3,
-  fontTrueType
-};
-
 class GfxFont {
 public:
 
@@ -95,23 +88,15 @@ public:
   // Get base font name.
   GString *getName() { return name; }
 
-  // Get font type.
-  GfxFontType getType() { return type; }
-
   // Get embedded font ID, i.e., a ref for the font file stream.
   // Returns false if there is no embedded font.
-  GBool getEmbeddedFontID(Ref *embID)
-    { *embID = embFontID; return embFontID.num >= 0; }
+  GBool getEmbeddedFontID(Ref *id)
+    { *id = embFontID; return embFontName != NULL; }
 
   // Get the PostScript font name for the embedded font.  Returns
   // NULL if there is no embedded font.
   char *getEmbeddedFontName()
     { return embFontName ? embFontName->getCString() : (char *)NULL; }
-
-  // Get the name of the external font file.  Returns NULL if there
-  // is no external font file.
-  char *getExtFontFile()
-    { return extFontFile ? extFontFile->getCString() : (char *)NULL; }
 
   // Get font descriptor flags.
   GBool isFixedWidth() { return flags & fontFixedWidth; }
@@ -128,10 +113,7 @@ public:
   char *getCharName(int code) { return encoding->getCharName(code); }
 
   // Return the code associated with <name>.
-  int getCharCode(char *charName) { return encoding->getCharCode(charName); }
-
-  // Return the font matrix.
-  double *getFontMatrix() { return fontMat; }
+  int getCharCode(char *name) { return encoding->getCharCode(name); }
 
 private:
 
@@ -141,17 +123,13 @@ private:
   void getType1Encoding(Stream *str);
   void makeWidths(Dict *fontDict, GfxFontEncoding *builtinEncoding,
 		  Gushort *builtinWidths);
-  GBool getTrueTypeWidths();
 
   GString *tag;			// PDF font tag
   Ref id;			// reference (used as unique ID)
   GString *name;		// font name
   int flags;			// font descriptor flags
-  GfxFontType type;		// type of font
   GString *embFontName;		// name of embedded font
   Ref embFontID;		// ref to embedded font file stream
-  GString *extFontFile;		// external font file name
-  double fontMat[6];		// font matrix
   double widths[256];		// width of each char
   GfxFontEncoding *encoding;	// font encoding
 };

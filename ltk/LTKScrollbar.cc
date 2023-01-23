@@ -246,7 +246,7 @@ void LTKScrollbar::buttonRelease(int mx, int my, int button, GBool click) {
   }
 }
 
-void LTKScrollbar::mouseMove(int mx, int my, int btn) {
+void LTKScrollbar::mouseMove(int mx, int my, int pressedBtn) {
   int oldPos = pos;
   int w1, h1;
 

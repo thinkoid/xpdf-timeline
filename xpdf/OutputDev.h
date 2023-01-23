@@ -18,7 +18,6 @@
 class GString;
 class GfxState;
 class GfxColorSpace;
-class GfxImageColorMap;
 class Stream;
 
 //------------------------------------------------------------------------
@@ -34,7 +33,7 @@ public:
   // Destructor.
   virtual ~OutputDev() {}
 
-  //----- get info about output device
+  //---- get info about output device
 
   // Does this device use upside-down coordinates?
   // (Upside-down means (0,0) is the top left corner of the page.)
@@ -116,7 +115,7 @@ public:
 			     int width, int height, GBool invert,
 			     GBool inlineImg);
   virtual void drawImage(GfxState *state, Stream *str, int width,
-			 int height, GfxImageColorMap *colorMap,
+			 int height, GfxColorSpace *colorSpace,
 			 GBool inlineImg);
 
 private:

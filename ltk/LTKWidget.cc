@@ -17,7 +17,6 @@
 #include <stddef.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <LTKApp.h>
 #include <LTKWindow.h>
 #include <LTKWidget.h>
 
@@ -78,7 +77,6 @@ void LTKWidget::layout3() {
     xwin = XCreateSimpleWindow(getDisplay(), parent->getXWindow(),
 			       x, y, width, height, 0,
 			       getFgColor(), getBgColor());
-    parent->getApp()->registerXWindow(xwin, parent, this);
     XSelectInput(getDisplay(), xwin, getEventMask());
   } else {
     XMoveResizeWindow(getDisplay(), xwin, x, y, width, height);
@@ -104,12 +102,12 @@ void LTKWidget::buttonRelease(int mx, int my, int button, GBool click) {
     (*btnReleaseCbk)(this, widgetNum, mx, my, button, click);
 }
 
-void LTKWidget::mouseMove(int mx, int my, int btn) {
-  if (btn == 0) {
+void LTKWidget::mouseMove(int mx, int my, int pressedBtn) {
+  if (pressedBtn == 0) {
     if (mouseMoveCbk)
       (*mouseMoveCbk)(this, widgetNum, mx, my);
   } else {
     if (mouseDragCbk)
-      (*mouseDragCbk)(this, widgetNum, mx, my, btn);
+      (*mouseDragCbk)(this, widgetNum, mx, my, pressedBtn);
   }
 }

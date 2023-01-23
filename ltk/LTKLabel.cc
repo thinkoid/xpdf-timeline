@@ -18,14 +18,9 @@
 #include <LTKLabel.h>
 
 LTKLabel::LTKLabel(char *name1, int widgetNum1,
-		   LTKLabelSize size1, int maxLength1,
-		   char *fontName1, char *text1):
+		   int maxLength1, char *fontName1, char *text1):
     LTKWidget(name1, widgetNum1) {
-  size = size1;
-  if (size == ltkLabelMaxLength)
-    maxLength = maxLength1;
-  else
-    maxLength = -1;
+  maxLength = maxLength1;
   text = text1 ? new GString(text1) : new GString();
   length = text->getLength();
   if (maxLength >= 0 && length > maxLength)
@@ -44,12 +39,12 @@ LTKLabel::~LTKLabel() {
 }
 
 void LTKLabel::setText(char *text1) {
-  if (size == ltkLabelStatic)
+  if (maxLength < 0)
     return;
   delete text;
   text = text1 ? new GString(text1) : new GString();
   length = text->getLength();
-  if (maxLength >= 0 && length > maxLength)
+  if (length > maxLength)
     length = maxLength;
   if (getXWindow() != None) {
     clear();
@@ -61,7 +56,6 @@ void LTKLabel::layout1() {
   XCharStruct extents;
   int direction, ascent, descent;
   XGCValues gcValues;
-  int textWidth;
 
   if (textGC == None) {
     if (fontName &&
@@ -79,19 +73,12 @@ void LTKLabel::layout1() {
       textGC = getFgGC();
     }
   }
-  textWidth = 0;
-  switch (size) {
-  case ltkLabelStatic:
+  if (maxLength < 0) {
     XTextExtents(fontStruct, text->getCString(), text->getLength(),
 		 &direction, &ascent, &descent, &extents);
     textWidth = extents.width;
-    break;
-  case ltkLabelFixedWidth:
-    textWidth = 0;
-    break;
-  case ltkLabelMaxLength:
+  } else {
     textWidth = maxLength * fontStruct->max_bounds.width;
-    break;
   }
   textHeight = fontStruct->ascent + fontStruct->descent;
   textBase = fontStruct->ascent;

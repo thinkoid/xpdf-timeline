@@ -187,7 +187,7 @@ public:
   virtual ~ASCII85Stream();
   virtual void reset();
   virtual int getChar()
-    { int ch = lookChar(); ++index; return ch; }
+    { int c = lookChar(); ++index; return c; }
   virtual int lookChar();
   virtual int getPos() { return str->getPos(); }
   virtual GString *getPSFilter(char *indent);
@@ -199,8 +199,8 @@ public:
 private:
 
   Stream *str;
-  int c[5];
-  int b[4];
+  Gulong c[5];
+  Gulong b[4];
   int index, n;
   GBool eof;
 };
@@ -323,11 +323,8 @@ private:
   int outputBits;		// remaining ouput bits
   int buf;			// character buffer
 
-  short getTwoDimCode();
-  short getWhiteCode();
-  short getBlackCode();
-  short look13Bits();
-  void eatBits(int bits) { inputBits -= bits; }
+  short getCode(CCITTCodeTable *table);
+  int getBit();
 };
 
 //------------------------------------------------------------------------
@@ -416,7 +413,7 @@ private:
 #define flateMask            (flateWindow-1)
 #define flateMaxHuffman         15    // max Huffman code length
 #define flateMaxCodeLenCodes    19    // max # code length codes
-#define flateMaxLitCodes       288    // max # literal codes
+#define flateMaxLitCodes       286    // max # literal codes
 #define flateMaxDistCodes       30    // max # distance codes
 
 // Huffman code table entry
