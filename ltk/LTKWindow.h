@@ -15,8 +15,8 @@
 
 #include <stddef.h>
 #include <X11/Xlib.h>
-#include <gtypes.h>
-#include <GString.h>
+#include "gtypes.h"
+#include "GString.h"
 
 class LTKApp;
 class LTKWidget;
@@ -47,9 +47,9 @@ public:
 
   //---------- constructor and destructor ----------
 
-  LTKWindow(LTKApp *app1, GBool dialog1, char *title,
-	    char **iconData1, char *defaultWidgetName,
-	    LTKBox *box1);
+  LTKWindow(LTKApp *appA, GBool dialogA, char *titleA,
+	    char **iconDataA, char *defaultWidgetName,
+	    LTKBox *boxA);
 
   ~LTKWindow();
 
@@ -62,6 +62,7 @@ public:
   Display *getDisplay() { return display; }
   int getScreenNum() { return screenNum; }
   Window getXWindow() { return xwin; }
+  Colormap getColormap() { return colormap; }
   unsigned long getFgColor() { return fgColor; }
   unsigned long getBgColor() { return bgColor; }
   GC getFgGC() { return fgGC; }
@@ -71,18 +72,19 @@ public:
   GC getXorGC() { return xorGC; }
   XFontStruct *getXFontStruct() { return fontStruct; }
   LTKWindow *getNext() { return next; }
-  LTKWindow *setNext(LTKWindow *next1) { return next = next1; }
+  LTKWindow *setNext(LTKWindow *nextA) { return next = nextA; }
   LTKWidget *addWidget(LTKWidget *widget);
   LTKWidget *delWidget(LTKWidget *widget);
-  LTKWidget *findWidget(Window xwin1);
   LTKWidget *findWidget(char *name);
 
   //---------- special access ----------
 
-  void setMenu(LTKMenu *menu1) { menu = menu1; }
+  void setInstallCmap(GBool inst) { installCmap = inst; }
+  void setMenu(LTKMenu *menuA) { menu = menuA; }
   void setKeyCbk(LTKWindowKeyCbk cbk) { keyCbk = cbk; }
   void setPropChangeCbk(LTKWindowPropCbk cbk);
   void setLayoutCbk(LTKWindowLayoutCbk cbk) { layoutCbk = cbk; }
+  void setDecorated(GBool val) { decorated = val; }
   void setKeyWidget(LTKWidget *widget) { keyWidget = widget; }
   LTKWidget *getKeyWidget() { return keyWidget; }
   LTKWidget *getSelectionWidget() { return selectionWidget; }
@@ -92,8 +94,8 @@ public:
   //---------- layout ----------
 
   GBool checkFills(char **err);
-  void layout(int x, int y, int width1, int height1);
-  void layoutDialog(LTKWindow *overWin1, int width1, int height1);
+  void layout(int x, int y, int widthA, int heightA);
+  void layoutDialog(LTKWindow *overWinA, int widthA, int heightA);
   void map();
 
   //---------- drawing ----------
@@ -118,7 +120,7 @@ public:
   GC makeGC(unsigned long color, int lineWidth, int lineStyle);
 
   // Set the window title.
-  void setTitle(GString *title1);
+  void setTitle(GString *title);
 
   // Set the cursor to one listed X11/cursorfont.h.
   void setCursor(Guint cursor);
@@ -155,6 +157,8 @@ protected:
   LTKWindowPropCbk propCbk;	// property change callback
   LTKWindowLayoutCbk layoutCbk;	// layout window callback
 
+  GBool decorated;		// should this window be decorated?
+
   LTKWidget *defaultWidget;	// default widget (activated by return key)
   LTKWidget *keyWidget;		// current keyboard input focus
   LTKWidget *selectionWidget;	// widget which owns selection
@@ -167,6 +171,8 @@ protected:
   int screenNum;		// X screen number
   Window xwin;			// X window ID
   long eventMask;		// current event mask
+  GBool installCmap;		// install a private colormap
+  Colormap colormap;		// the colormap
   unsigned long fgColor,	// foreground pixel number
                 bgColor;	// background pixel number
   GC fgGC;			// X GC for foreground color

@@ -2,7 +2,7 @@
 //
 // config.h
 //
-// Copyright 1996 Derek B. Noonburg
+// Copyright 1996-2002 Derek B. Noonburg
 //
 //========================================================================
 
@@ -10,29 +10,50 @@
 #define CONFIG_H
 
 //------------------------------------------------------------------------
-// general constants
+// version
 //------------------------------------------------------------------------
 
 // xpdf version
-#define xpdfVersion "0.7"
+#define xpdfVersion "1.00"
 
 // supported PDF version
-#define pdfVersion "1.2"
-#define pdfVersionNum 1.2
+#define supportedPDFVersionStr "1.4"
+#define supportedPDFVersionNum 1.4
 
 // copyright notice
-#define xpdfCopyright "Copyright \251 1996, 1997 Derek B. Noonburg"
+#define xpdfCopyright "Copyright 1996-2002 Derek B. Noonburg"
 
-// paper size (in points) for PostScript output
-// (set to American 8.5"x11" for now; will be configurable later)
-#define paperWidth  612
-#define paperHeight 792
+//------------------------------------------------------------------------
+// paper size
+//------------------------------------------------------------------------
 
-// config file name
-#if defined(VMS) || defined(__EMX__)
-#define xpdfConfigFile "xpdfrc"
+// default paper size (in points) for PostScript output
+#ifdef A4_PAPER
+#define defPaperWidth  595    // ISO A4 (210x297 mm)
+#define defPaperHeight 842
 #else
-#define xpdfConfigFile ".xpdfrc"
+#define defPaperWidth  612    // American letter (8.5x11")
+#define defPaperHeight 792
+#endif
+
+//------------------------------------------------------------------------
+// config file (xpdfrc) path
+//------------------------------------------------------------------------
+
+// user config file name, relative to the user's home directory
+#if defined(VMS) || (defined(WIN32) && !defined(__CYGWIN32__))
+#define xpdfUserConfigFile "xpdfrc"
+#else
+#define xpdfUserConfigFile ".xpdfrc"
+#endif
+
+// system config file name (set via the configure script)
+#ifdef SYSTEM_XPDFRC
+#define xpdfSysConfigFile SYSTEM_XPDFRC
+#else
+// under Windows, we get the directory with the executable and then
+// append this file name
+#define xpdfSysConfigFile "xpdfrc"
 #endif
 
 //------------------------------------------------------------------------
@@ -42,31 +63,64 @@
 // default maximum size of color cube to allocate
 #define defaultRGBCube 5
 
-// number of fonts to cache
-#define fontCacheSize 16
+// number of fonts (combined t1lib, FreeType, X server) to cache
+#define xOutFontCacheSize 64
 
 //------------------------------------------------------------------------
-// misc
+// popen
 //------------------------------------------------------------------------
 
-#ifdef NO_POPEN
-// command to uncompress a file
-#ifdef USE_GZIP
-#define uncompressCmd "gzip -d -q"
+#ifdef _MSC_VER
+#define popen _popen
+#define pclose _pclose
+#endif
+
+#if defined(VMS) || defined(VMCMS) || defined(DOS) || defined(OS2) || defined(__EMX__) || defined(WIN32) || defined(__DJGPP__) || defined(__CYGWIN32__) || defined(MACOS)
+#define POPEN_READ_MODE "rb"
 #else
-#define uncompressCmd "uncompress"
-#endif // USE_GZIP
-#else // NO_POPEN
+#define POPEN_READ_MODE "r"
+#endif
+
+//------------------------------------------------------------------------
+// uncompress program
+//------------------------------------------------------------------------
+
+#ifdef HAVE_POPEN
+
 // command to uncompress to stdout
-#ifdef USE_GZIP
-#define uncompressCmd "gzip -d -c -q"
+#  ifdef USE_GZIP
+#    define uncompressCmd "gzip -d -c -q"
+#  else
+#    ifdef __EMX__
+#      define uncompressCmd "compress -d -c"
+#    else
+#      define uncompressCmd "uncompress -c"
+#    endif // __EMX__
+#  endif // USE_GZIP
+
+#else // HAVE_POPEN
+
+// command to uncompress a file
+#  ifdef USE_GZIP
+#    define uncompressCmd "gzip -d -q"
+#  else
+#    define uncompressCmd "uncompress"
+#  endif // USE_GZIP
+
+#endif // HAVE_POPEN
+
+//------------------------------------------------------------------------
+// Win32 stuff
+//------------------------------------------------------------------------
+
+#ifdef CDECL
+#undef CDECL
+#endif
+
+#ifdef _MSC_VER
+#define CDECL __cdecl
 #else
-#ifdef __EMX__
-#define uncompressCmd "compress -d -c"
-#else
-#define uncompressCmd "uncompress -c"
-#endif // __EMX__
-#endif // USE_GZIP
-#endif // NO_POPEN
+#define CDECL
+#endif
 
 #endif

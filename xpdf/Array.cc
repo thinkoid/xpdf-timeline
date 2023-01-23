@@ -1,6 +1,6 @@
 //========================================================================
 //
-// Array.h
+// Array.cc
 //
 // Copyright 1996 Derek B. Noonburg
 //
@@ -10,8 +10,9 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stddef.h>
-#include <gmem.h>
+#include "gmem.h"
 #include "Object.h"
 #include "Array.h"
 
@@ -19,7 +20,8 @@
 // Array
 //------------------------------------------------------------------------
 
-Array::Array() {
+Array::Array(XRef *xrefA) {
+  xref = xrefA;
   elems = NULL;
   size = length = 0;
   ref = 1;
@@ -43,7 +45,7 @@ void Array::add(Object *elem) {
 }
 
 Object *Array::get(int i, Object *obj) {
-  return elems[i].fetch(obj);
+  return elems[i].fetch(xref, obj);
 }
 
 Object *Array::getNF(int i, Object *obj) {

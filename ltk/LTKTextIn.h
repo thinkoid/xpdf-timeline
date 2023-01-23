@@ -13,9 +13,9 @@
 #pragma interface
 #endif
 
-#include <gtypes.h>
-#include <GString.h>
-#include <LTKWidget.h>
+#include "gtypes.h"
+#include "GString.h"
+#include "LTKWidget.h"
 
 //------------------------------------------------------------------------
 // LTKTextIn
@@ -26,9 +26,9 @@ public:
 
   //---------- constructor and destructor ----------
 
-  LTKTextIn(char *name1, int widgetNum1, int minWidth1,
-	    char *fontName1, LTKStringValCbk doneCbk1,
-	    char *tabTarget1);
+  LTKTextIn(char *nameA, int widgetNumA, int minWidthA,
+	    char *fontNameA, LTKStringValCbk doneCbkA,
+	    char *tabTargetA);
 
   virtual ~LTKTextIn();
 
@@ -54,7 +54,7 @@ public:
 
   virtual void buttonPress(int mx, int my, int button, GBool dblClick);
   virtual void buttonRelease(int mx, int my, int button, GBool click);
-  virtual void mouseMove(int mx, int my, int pressedBtn);
+  virtual void mouseMove(int mx, int my, int btn);
   virtual void activate(GBool on);
   virtual void keyPress(KeySym key, Guint modifiers, char *s, int n);
   virtual void clearSelection();

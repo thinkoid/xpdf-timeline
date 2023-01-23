@@ -6,13 +6,15 @@
  * Copyright 1996 Derek B. Noonburg
  */
 
+#include <aconf.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
-#include <gmem.h>
+#include "gmem.h"
 
 #ifdef DEBUG_MEM
+
 typedef struct _GMemHdr {
   int size;
   int index;
@@ -23,28 +25,42 @@ typedef struct _GMemHdr {
 #define gMemTrlSize (sizeof(long))
 
 #if gmemTrlSize==8
-#define gMemDeadVal 0xdeadbeefdeadbeef
+#define gMemDeadVal 0xdeadbeefdeadbeefUL
 #else
-#define gMemDeadVal 0xdeadbeef
+#define gMemDeadVal 0xdeadbeefUL
+#endif
 
 /* round data size so trailer will be aligned */
 #define gMemDataSize(size) \
   ((((size) + gMemTrlSize - 1) / gMemTrlSize) * gMemTrlSize)
 
-#endif
+#define gMemNLists    64
+#define gMemListShift  4
+#define gMemListMask  (gMemNLists - 1)
+static GMemHdr *gMemList[gMemNLists] = {
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+  NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+};
 
-static GMemHdr *gMemList = NULL;
 static int gMemIndex = 0;
 static int gMemAlloc = 0;
-#endif
+
+#endif /* DEBUG_MEM */
 
 void *gmalloc(int size) {
-#if DEBUG_MEM
+#ifdef DEBUG_MEM
   int size1;
   char *mem;
   GMemHdr *hdr;
   void *data;
-  long *trl, *p;
+  int lst;
+  unsigned long *trl, *p;
 
   if (size == 0)
     return NULL;
@@ -55,13 +71,14 @@ void *gmalloc(int size) {
   }
   hdr = (GMemHdr *)mem;
   data = (void *)(mem + gMemHdrSize);
-  trl = (long *)(mem + gMemHdrSize + size1);
+  trl = (unsigned long *)(mem + gMemHdrSize + size1);
   hdr->size = size;
   hdr->index = gMemIndex++;
-  hdr->next = gMemList;
-  gMemList = hdr;
+  lst = ((int)hdr >> gMemListShift) & gMemListMask;
+  hdr->next = gMemList[lst];
+  gMemList[lst] = hdr;
   ++gMemAlloc;
-  for (p = (long *)data; p <= trl; ++p)
+  for (p = (unsigned long *)data; p <= trl; ++p)
     *p = gMemDeadVal;
   return data;
 #else
@@ -78,7 +95,7 @@ void *gmalloc(int size) {
 }
 
 void *grealloc(void *p, int size) {
-#if DEBUG_MEM
+#ifdef DEBUG_MEM
   GMemHdr *hdr;
   void *q;
   int oldSize;
@@ -123,11 +140,13 @@ void gfree(void *p) {
   int size;
   GMemHdr *hdr;
   GMemHdr *prevHdr, *q;
-  long *trl, *clr;
+  int lst;
+  unsigned long *trl, *clr;
 
   if (p) {
     hdr = (GMemHdr *)((char *)p - gMemHdrSize);
-    for (prevHdr = NULL, q = gMemList; q; prevHdr = q, q = q->next) {
+    lst = ((int)hdr >> gMemListShift) & gMemListMask;
+    for (prevHdr = NULL, q = gMemList[lst]; q; prevHdr = q, q = q->next) {
       if (q == hdr)
 	break;
     }
@@ -135,15 +154,15 @@ void gfree(void *p) {
       if (prevHdr)
 	prevHdr->next = hdr->next;
       else
-	gMemList = hdr->next;
+	gMemList[lst] = hdr->next;
       --gMemAlloc;
       size = gMemDataSize(hdr->size);
-      trl = (long *)((char *)hdr + gMemHdrSize + size);
+      trl = (unsigned long *)((char *)hdr + gMemHdrSize + size);
       if (*trl != gMemDeadVal) {
 	fprintf(stderr, "Overwrite past end of block %d at address %p\n",
 		hdr->index, p);
       }
-      for (clr = (long *)hdr; clr <= trl; ++clr)
+      for (clr = (unsigned long *)hdr; clr <= trl; ++clr)
 	*clr = gMemDeadVal;
       free(hdr);
     } else {
@@ -159,14 +178,17 @@ void gfree(void *p) {
 #ifdef DEBUG_MEM
 void gMemReport(FILE *f) {
   GMemHdr *p;
+  int lst;
 
   fprintf(f, "%d memory allocations in all\n", gMemIndex);
   if (gMemAlloc > 0) {
     fprintf(f, "%d memory blocks left allocated:\n", gMemAlloc);
     fprintf(f, " index     size\n");
     fprintf(f, "-------- --------\n");
-    for (p = gMemList; p; p = p->next)
-      fprintf(f, "%8d %8d\n", p->index, p->size);
+    for (lst = 0; lst < gMemNLists; ++lst) {
+      for (p = gMemList[lst]; p; p = p->next)
+	fprintf(f, "%8d %8d\n", p->index, p->size);
+    }
   } else {
     fprintf(f, "No memory blocks left allocated\n");
   }

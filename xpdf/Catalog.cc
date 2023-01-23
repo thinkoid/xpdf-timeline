@@ -1,6 +1,6 @@
 //========================================================================
 //
-// Catalog.h
+// Catalog.cc
 //
 // Copyright 1996 Derek B. Noonburg
 //
@@ -10,9 +10,11 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stddef.h>
-#include <gmem.h>
+#include "gmem.h"
 #include "Object.h"
+#include "XRef.h"
 #include "Array.h"
 #include "Dict.h"
 #include "Page.h"
@@ -24,24 +26,30 @@
 // Catalog
 //------------------------------------------------------------------------
 
-Catalog::Catalog(Object *catDict) {
-  Object pagesDict;
-  Object obj;
+Catalog::Catalog(XRef *xrefA, GBool printCommands) {
+  Object catDict, pagesDict;
+  Object obj, obj2;
+  int numPages0;
   int i;
 
   ok = gTrue;
+  xref = xrefA;
   pages = NULL;
   pageRefs = NULL;
-  numPages = 0;
+  numPages = pagesSize = 0;
+  baseURI = NULL;
 
-  if (!catDict->isDict("Catalog")) {
-    error(-1, "Catalog object is wrong type (%s)", catDict->getTypeName());
+  xref->getCatalog(&catDict);
+  if (!catDict.isDict()) {
+    error(-1, "Catalog object is wrong type (%s)", catDict.getTypeName());
     goto err1;
   }
 
   // read page tree
-  catDict->dictLookup("Pages", &pagesDict);
-  if (!pagesDict.isDict("Pages")) {
+  catDict.dictLookup("Pages", &pagesDict);
+  // This should really be isDict("Pages"), but I've seen at least one
+  // PDF file where the /Type entry is missing.
+  if (!pagesDict.isDict()) {
     error(-1, "Top-level pages object is wrong type (%s)",
 	  pagesDict.getTypeName());
     goto err2;
@@ -52,28 +60,47 @@ Catalog::Catalog(Object *catDict) {
 	  obj.getTypeName());
     goto err3;
   }
-  numPages = obj.getInt();
+  pagesSize = numPages0 = obj.getInt();
   obj.free();
-  pages = (Page **)gmalloc(numPages * sizeof(Page *));
-  pageRefs = (Ref *)gmalloc(numPages * sizeof(Ref));
-  for (i = 0; i < numPages; ++i) {
+  pages = (Page **)gmalloc(pagesSize * sizeof(Page *));
+  pageRefs = (Ref *)gmalloc(pagesSize * sizeof(Ref));
+  for (i = 0; i < pagesSize; ++i) {
     pages[i] = NULL;
     pageRefs[i].num = -1;
     pageRefs[i].gen = -1;
   }
-  readPageTree(pagesDict.getDict(), NULL, 0);
+  numPages = readPageTree(pagesDict.getDict(), NULL, 0, printCommands);
+  if (numPages != numPages0) {
+    error(-1, "Page count in top-level pages object is incorrect");
+  }
   pagesDict.free();
 
   // read named destination dictionary
-  catDict->dictLookup("Dests", &dests);
+  catDict.dictLookup("Dests", &dests);
 
   // read root of named destination tree
-  if (catDict->dictLookup("Names", &obj)->isDict())
+  if (catDict.dictLookup("Names", &obj)->isDict())
     obj.dictLookup("Dests", &nameTree);
   else
     nameTree.initNull();
   obj.free();
 
+  // read base URI
+  if (catDict.dictLookup("URI", &obj)->isDict()) {
+    if (obj.dictLookup("Base", &obj2)->isString()) {
+      baseURI = obj2.getString()->copy();
+    }
+    obj2.free();
+  }
+  obj.free();
+
+  // get the metadata stream
+  catDict.dictLookup("Metadata", &metadata);
+
+  // get the structure tree root
+  catDict.dictLookup("StructTreeRoot", &structTreeRoot);
+
+  catDict.free();
   return;
 
  err3:
@@ -81,6 +108,7 @@ Catalog::Catalog(Object *catDict) {
  err2:
   pagesDict.free();
  err1:
+  catDict.free();
   dests.initNull();
   nameTree.initNull();
   ok = gFalse;
@@ -90,24 +118,55 @@ Catalog::~Catalog() {
   int i;
 
   if (pages) {
-    for (i = 0; i < numPages; ++i) {
-      if (pages[i])
+    for (i = 0; i < pagesSize; ++i) {
+      if (pages[i]) {
 	delete pages[i];
+      }
     }
     gfree(pages);
     gfree(pageRefs);
   }
   dests.free();
   nameTree.free();
+  if (baseURI) {
+    delete baseURI;
+  }
+  metadata.free();
+  structTreeRoot.free();
 }
 
-int Catalog::readPageTree(Dict *pagesDict, PageAttrs *attrs, int start) {
+GString *Catalog::readMetadata() {
+  GString *s;
+  Dict *dict;
+  Object obj;
+  int c;
+
+  if (!metadata.isStream()) {
+    return NULL;
+  }
+  dict = metadata.streamGetDict();
+  if (!dict->lookup("Subtype", &obj)->isName("XML")) {
+    error(-1, "Unknown Metadata type: '%s'\n",
+	  obj.isName() ? obj.getName() : "???");
+  }
+  obj.free();
+  s = new GString();
+  metadata.streamReset();
+  while ((c = metadata.streamGetChar()) != EOF) {
+    s->append(c);
+  }
+  metadata.streamClose();
+  return s;
+}
+
+int Catalog::readPageTree(Dict *pagesDict, PageAttrs *attrs, int start,
+			  GBool printCommands) {
   Object kids;
   Object kid;
   Object kidRef;
   PageAttrs *attrs1, *attrs2;
   Page *page;
-  int i;
+  int i, j;
 
   attrs1 = new PageAttrs(attrs, pagesDict);
   pagesDict->lookup("Kids", &kids);
@@ -120,10 +179,20 @@ int Catalog::readPageTree(Dict *pagesDict, PageAttrs *attrs, int start) {
     kids.arrayGet(i, &kid);
     if (kid.isDict("Page")) {
       attrs2 = new PageAttrs(attrs1, kid.getDict());
-      page = new Page(start+1, kid.getDict(), attrs2);
+      page = new Page(xref, start+1, kid.getDict(), attrs2, printCommands);
       if (!page->isOk()) {
 	++start;
 	goto err3;
+      }
+      if (start >= pagesSize) {
+	pagesSize += 32;
+	pages = (Page **)grealloc(pages, pagesSize * sizeof(Page *));
+	pageRefs = (Ref *)grealloc(pageRefs, pagesSize * sizeof(Ref));
+	for (j = pagesSize - 32; j < pagesSize; ++j) {
+	  pages[j] = NULL;
+	  pageRefs[j].num = -1;
+	  pageRefs[j].gen = -1;
+	}
       }
       pages[start] = page;
       kids.arrayGetNF(i, &kidRef);
@@ -133,10 +202,11 @@ int Catalog::readPageTree(Dict *pagesDict, PageAttrs *attrs, int start) {
       }
       kidRef.free();
       ++start;
-    //~ found one PDF file where a Pages object is missing the /Type entry
-    // } else if (kid.isDict("Pages")) {
+    // This should really be isDict("Pages"), but I've seen at least one
+    // PDF file where the /Type entry is missing.
     } else if (kid.isDict()) {
-      if ((start = readPageTree(kid.getDict(), attrs1, start)) < 0)
+      if ((start = readPageTree(kid.getDict(), attrs1, start, printCommands))
+	  < 0)
 	goto err2;
     } else {
       error(-1, "Kid object (page %d) is wrong type (%s)",
@@ -183,7 +253,7 @@ LinkDest *Catalog::findDest(GString *name) {
     else
       obj1.free();
   }
-  if (!found) {
+  if (!found && nameTree.isDict()) {
     if (!findDestInTree(&nameTree, name, &obj1)->isNull())
       found = gTrue;
     else

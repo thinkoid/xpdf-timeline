@@ -15,8 +15,8 @@
 
 #include <stddef.h>
 #include <X11/Xlib.h>
-#include <gtypes.h>
-#include <LTKCompoundWidget.h>
+#include "gtypes.h"
+#include "LTKCompoundWidget.h"
 
 class LTKButtonDialogWidget;
 
@@ -27,7 +27,7 @@ class LTKButtonDialogWidget;
 class LTKButtonDialog {
 public:
 
-  LTKButtonDialog(LTKWindow *overWin1, char *title,
+  LTKButtonDialog(LTKWindow *overWinA, char *title,
 		  char *line1, char *line2, char *line3,
 		  char *trueBtnLabel, char *falseBtnLabel);
   ~LTKButtonDialog();
@@ -49,7 +49,7 @@ public:
 
   //---------- constructor ----------
 
-  LTKButtonDialogWidget(char *name1, int widgetNum1,
+  LTKButtonDialogWidget(char *nameA, int widgetNumA,
 			char *line1, char *line2, char *line3,
 			char *trueBtnLabel, char *falseBtnLabel);
 

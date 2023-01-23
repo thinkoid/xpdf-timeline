@@ -16,14 +16,24 @@
 #include <stddef.h>
 #include "config.h"
 #include "Object.h"
+#include "GlobalParams.h"
 #include "OutputDev.h"
 
 class GfxPath;
 class GfxFont;
+class GfxColorSpace;
+class GfxSeparationColorSpace;
+class PSOutCustomColor;
 
 //------------------------------------------------------------------------
 // PSOutputDev
 //------------------------------------------------------------------------
+
+enum PSOutMode {
+  psModePS,
+  psModeEPS,
+  psModeForm
+};
 
 enum PSFileType {
   psFile,			// write to file
@@ -35,8 +45,8 @@ class PSOutputDev: public OutputDev {
 public:
 
   // Open a PostScript output file, and write the prolog.
-  PSOutputDev(char *fileName, Catalog *catalog,
-	      int firstPage, int lastPage, GBool embedType11);
+  PSOutputDev(char *fileName, XRef *xrefA, Catalog *catalog,
+	      int firstPage, int lastPage, PSOutMode modeA);
 
   // Destructor -- writes the trailer and closes the file.
   virtual ~PSOutputDev();
@@ -101,28 +111,63 @@ public:
   virtual void drawString(GfxState *state, GString *s);
 
   //----- image drawing
-  virtual void drawImageMask(GfxState *state, Stream *str,
+  virtual void drawImageMask(GfxState *state, Object *ref, Stream *str,
 			     int width, int height, GBool invert,
 			     GBool inlineImg);
-  virtual void drawImage(GfxState *state, Stream *str, int width,
-			 int height, GfxColorSpace *colorSpace,
-			 GBool inlineImg);
+  virtual void drawImage(GfxState *state, Object *ref, Stream *str,
+			 int width, int height, GfxImageColorMap *colorMap,
+			 int *maskColors, GBool inlineImg);
+
+#if OPI_SUPPORT
+  //----- OPI functions
+  virtual void opiBegin(GfxState *state, Dict *opiDict);
+  virtual void opiEnd(GfxState *state, Dict *opiDict);
+#endif
 
 private:
 
+  void setupResources(Dict *resDict);
+  void setupFonts(Dict *resDict);
   void setupFont(GfxFont *font);
-  void setupEmbeddedFont(Ref *id);
+  void setupEmbeddedType1Font(Ref *id, char *psName);
+  void setupEmbeddedType1Font(GString *fileName, char *psName);
+  void setupEmbeddedType1CFont(GfxFont *font, Ref *id, char *psName);
+  void setupEmbeddedTrueTypeFont(GfxFont *font, Ref *id, char *psName);
+  void setupImages(Dict *resDict);
+  void setupImage(Ref id, Stream *str);
+  void addProcessColor(double c, double m, double y, double k);
+  void addCustomColor(GfxSeparationColorSpace *sepCS);
   void doPath(GfxPath *path);
-  void doImage(GBool mask, GBool inlineImg, Stream *str,
-	       int width, int height, int len);
-  void writePS(char *fmt, ...);
+  void doImageL1(GfxImageColorMap *colorMap,
+		 GBool invert, GBool inlineImg,
+		 Stream *str, int width, int height, int len);
+  void doImageL1Sep(GfxImageColorMap *colorMap,
+		    GBool invert, GBool inlineImg,
+		    Stream *str, int width, int height, int len);
+  void doImageL2(Object *ref, GfxImageColorMap *colorMap,
+		 GBool invert, GBool inlineImg,
+		 Stream *str, int width, int height, int len);
+  void dumpColorSpaceL2(GfxColorSpace *colorSpace);
+#if OPI_SUPPORT
+  void opiBegin20(GfxState *state, Dict *dict);
+  void opiBegin13(GfxState *state, Dict *dict);
+  void opiTransform(GfxState *state, double x0, double y0,
+		    double *x1, double *y1);
+  GBool getFileSpec(Object *fileSpec, Object *fileName);
+#endif
+  void writePS(const char *fmt, ...);
   void writePSString(GString *s);
 
-  GBool embedType1;		// embed Type 1 fonts?
+  PSLevel level;		// PostScript level (1, 2, separation)
+  PSOutMode mode;		// PostScript mode (PS, EPS, form)
+  int paperWidth;		// width of paper, in pts
+  int paperHeight;		// height of paper, in pts
 
   FILE *f;			// PostScript file
   PSFileType fileType;		// file / pipe / stdout
   int seqPage;			// current sequential page number
+
+  XRef *xref;			// the xref table for this PDF file
 
   Ref *fontIDs;			// list of object IDs of all used fonts
   int fontIDLen;		// number of entries in fontIDs array
@@ -130,6 +175,26 @@ private:
   Ref *fontFileIDs;		// list of object IDs of all embedded fonts
   int fontFileIDLen;		// number of entries in fontFileIDs array
   int fontFileIDSize;		// size of fontFileIDs array
+  GString **fontFileNames;	// list of names of all embedded external fonts
+  int fontFileNameLen;		// number of entries in fontFileNames array
+  int fontFileNameSize;		// size of fontFileNames array
+
+  double tx, ty;		// global translation
+  double xScale, yScale;	// global scaling
+  GBool landscape;		// true for landscape, false for portrait
+
+  GString *embFontList;		// resource comments for embedded fonts
+
+  int processColors;		// used process colors
+  PSOutCustomColor		// used custom colors
+    *customColors;
+
+#if OPI_SUPPORT
+  int opi13Nest;		// nesting level of OPI 1.3 objects
+  int opi20Nest;		// nesting level of OPI 2.0 objects
+#endif
+
+  GBool type3Warning;		// only show the Type 3 font warning once
 
   GBool ok;			// set up ok?
 };

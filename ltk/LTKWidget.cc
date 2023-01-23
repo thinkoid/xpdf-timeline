@@ -12,17 +12,19 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <LTKWindow.h>
-#include <LTKWidget.h>
+#include "LTKApp.h"
+#include "LTKWindow.h"
+#include "LTKWidget.h"
 
-LTKWidget::LTKWidget(char *name1, int widgetNum1) {
-  name = name1;
-  widgetNum = widgetNum1;
+LTKWidget::LTKWidget(char *nameA, int widgetNumA) {
+  name = nameA;
+  widgetNum = widgetNumA;
   parent = NULL;
   compParent = NULL;
   x = 0;
@@ -41,13 +43,13 @@ LTKWidget::LTKWidget(char *name1, int widgetNum1) {
 LTKWidget::~LTKWidget() {
 }
 
-void LTKWidget::setParent(LTKWindow *parent1) {
-  parent = parent1;
+void LTKWidget::setParent(LTKWindow *parentA) {
+  parent = parentA;
   parent->addWidget(this);
 }
 
-void LTKWidget::setCompoundParent(LTKWidget *compParent1) {
-  compParent = compParent1;
+void LTKWidget::setCompoundParent(LTKWidget *compParentA) {
+  compParent = compParentA;
 }
 
 long LTKWidget::getEventMask() {
@@ -65,11 +67,11 @@ long LTKWidget::getEventMask() {
   return mask;
 }
 
-void LTKWidget::layout2(int x1, int y1, int width1, int height1) {
-  x = x1;
-  y = y1;
-  width = width1;
-  height = height1;
+void LTKWidget::layout2(int xA, int yA, int widthA, int heightA) {
+  x = xA;
+  y = yA;
+  width = widthA;
+  height = heightA;
 }
 
 void LTKWidget::layout3() {
@@ -77,6 +79,7 @@ void LTKWidget::layout3() {
     xwin = XCreateSimpleWindow(getDisplay(), parent->getXWindow(),
 			       x, y, width, height, 0,
 			       getFgColor(), getBgColor());
+    parent->getApp()->registerXWindow(xwin, parent, this);
     XSelectInput(getDisplay(), xwin, getEventMask());
   } else {
     XMoveResizeWindow(getDisplay(), xwin, x, y, width, height);
@@ -102,12 +105,12 @@ void LTKWidget::buttonRelease(int mx, int my, int button, GBool click) {
     (*btnReleaseCbk)(this, widgetNum, mx, my, button, click);
 }
 
-void LTKWidget::mouseMove(int mx, int my, int pressedBtn) {
-  if (pressedBtn == 0) {
+void LTKWidget::mouseMove(int mx, int my, int btn) {
+  if (btn == 0) {
     if (mouseMoveCbk)
       (*mouseMoveCbk)(this, widgetNum, mx, my);
   } else {
     if (mouseDragCbk)
-      (*mouseDragCbk)(this, widgetNum, mx, my, pressedBtn);
+      (*mouseDragCbk)(this, widgetNum, mx, my, btn);
   }
 }

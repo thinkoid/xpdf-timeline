@@ -10,10 +10,11 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stddef.h>
 #include <string.h>
-#include <gmem.h>
-#include <GString.h>
+#include "gmem.h"
+#include "GString.h"
 #include "Error.h"
 #include "Object.h"
 #include "Array.h"
@@ -28,11 +29,11 @@ static GString *getFileSpecName(Object *fileSpecObj);
 // LinkDest
 //------------------------------------------------------------------------
 
-LinkDest::LinkDest(Array *a, GBool pageIsRef1) {
+LinkDest::LinkDest(Array *a, GBool pageIsRefA) {
   Object obj1, obj2;
 
   // initialize fields
-  pageIsRef = pageIsRef1;
+  pageIsRef = pageIsRefA;
   left = bottom = right = top = zoom = 0;
   ok = gFalse;
 
@@ -323,12 +324,39 @@ LinkLaunch::~LinkLaunch() {
 // LinkURI
 //------------------------------------------------------------------------
 
-LinkURI::LinkURI(Object *uriObj) {
+LinkURI::LinkURI(Object *uriObj, GString *baseURI) {
+  GString *uri2;
+  int n;
+  char c;
+
   uri = NULL;
-  if (uriObj->isString())
-    uri = uriObj->getString()->copy();
-  else
+  if (uriObj->isString()) {
+    uri2 = uriObj->getString()->copy();
+    if (baseURI) {
+      n = strcspn(uri2->getCString(), "/:");
+      if (n == uri2->getLength() || uri2->getChar(n) == '/') {
+	uri = baseURI->copy();
+	c = uri->getChar(uri->getLength() - 1);
+	if (c == '/' || c == '?') {
+	  if (uri2->getChar(0) == '/') {
+	    uri2->del(0);
+	  }
+	} else {
+	  if (uri2->getChar(0) != '/') {
+	    uri->append('/');
+	  }
+	}
+	uri->append(uri2);
+	delete uri2;
+      } else {
+	uri = uri2;
+      }
+    } else {
+      uri = uri2;
+    }
+  } else {
     error(-1, "Illegal URI-type link");
+  }
 }
 
 LinkURI::~LinkURI() {
@@ -337,11 +365,28 @@ LinkURI::~LinkURI() {
 }
 
 //------------------------------------------------------------------------
+// LinkNamed
+//------------------------------------------------------------------------
+
+LinkNamed::LinkNamed(Object *nameObj) {
+  name = NULL;
+  if (nameObj->isName()) {
+    name = new GString(nameObj->getName());
+  }
+}
+
+LinkNamed::~LinkNamed() {
+  if (name) {
+    delete name;
+  }
+}
+
+//------------------------------------------------------------------------
 // LinkUnknown
 //------------------------------------------------------------------------
 
-LinkUnknown::LinkUnknown(char *action1) {
-  action = new GString(action1);
+LinkUnknown::LinkUnknown(char *actionA) {
+  action = new GString(actionA);
 }
 
 LinkUnknown::~LinkUnknown() {
@@ -352,10 +397,12 @@ LinkUnknown::~LinkUnknown() {
 // Link
 //------------------------------------------------------------------------
 
-Link::Link(Dict *dict) {
+Link::Link(Dict *dict, GString *baseURI) {
   Object obj1, obj2, obj3, obj4;
+  double t;
 
   action = NULL;
+  ok = gFalse;
 
   // get rectangle
   if (!dict->lookup("Rect", &obj1)->isArray()) {
@@ -387,19 +434,29 @@ Link::Link(Dict *dict) {
   y2 = obj2.getNum();
   obj2.free();
   obj1.free();
+  if (x1 > x2) {
+    t = x1;
+    x1 = x2;
+    x2 = t;
+  }
+  if (y1 > y2) {
+    t = y1;
+    y1 = y2;
+    y2 = t;
+  }
 
   // get border
-  dict->lookup("Border", &obj1);
-  if (!obj1.isArray()) {
-    error(-1, "Annotation border is wrong type");
-    goto err2;
+  borderW = 0;
+  if (!dict->lookup("Border", &obj1)->isNull()) {
+    if (obj1.isArray() && obj1.arrayGetLength() >= 3) {
+      if (obj1.arrayGet(2, &obj2)->isNum()) {
+	borderW = obj2.getNum();
+      } else {
+	error(-1, "Bad annotation border");
+      }
+      obj2.free();
+    }
   }
-  if (!obj1.arrayGet(2, &obj2)->isNum()) {
-    error(-1, "Bad annotation border");
-    goto err1;
-  }
-  borderW = obj2.getNum();
-  obj2.free();
   obj1.free();
 
   // look for destination
@@ -433,7 +490,13 @@ Link::Link(Dict *dict) {
       // URI action
       } else if (obj2.isName("URI")) {
 	obj1.dictLookup("URI", &obj3);
-	action = new LinkURI(&obj3);
+	action = new LinkURI(&obj3, baseURI);
+	obj3.free();
+
+      // Named action
+      } else if (obj2.isName("Named")) {
+	obj1.dictLookup("N", &obj3);
+	action = new LinkNamed(&obj3);
 	obj3.free();
 
       // unknown action
@@ -456,10 +519,8 @@ Link::Link(Dict *dict) {
   obj1.free();
 
   // check for bad action
-  if (action && !action->isOk()) {
-    delete action;
-    action = NULL;
-  }
+  if (action && action->isOk())
+    ok = gTrue;
 
   return;
 
@@ -467,8 +528,6 @@ Link::Link(Dict *dict) {
   obj2.free();
  err2:
   obj1.free();
-  x1 = y1 = 1;
-  x2 = y2 = 0;
 }
 
 Link::~Link() {
@@ -480,7 +539,8 @@ Link::~Link() {
 // Links
 //------------------------------------------------------------------------
 
-Links::Links(Object *annots) {
+Links::Links(Object *annots, GString *baseURI) {
+  Link *link;
   Object obj1, obj2;
   int size;
   int i;
@@ -491,13 +551,18 @@ Links::Links(Object *annots) {
 
   if (annots->isArray()) {
     for (i = 0; i < annots->arrayGetLength(); ++i) {
-      if (annots->arrayGet(i, &obj1)->isDict("Annot")) {
+      if (annots->arrayGet(i, &obj1)->isDict()) {
 	if (obj1.dictLookup("Subtype", &obj2)->isName("Link")) {
-	  if (numLinks >= size) {
-	    size += 16;
-	    links = (Link **)grealloc(links, size * sizeof(Link *));
+	  link = new Link(obj1.getDict(), baseURI);
+	  if (link->isOk()) {
+	    if (numLinks >= size) {
+	      size += 16;
+	      links = (Link **)grealloc(links, size * sizeof(Link *));
+	    }
+	    links[numLinks++] = link;
+	  } else {
+	    delete link;
 	  }
-	  links[numLinks++] = new Link(obj1.getDict());
 	}
 	obj2.free();
       }
@@ -519,9 +584,7 @@ LinkAction *Links::find(double x, double y) {
 
   for (i = 0; i < numLinks; ++i) {
     if (links[i]->inRect(x, y)) {
-      if (links[i]->getAction())
-	return links[i]->getAction();
-      return NULL;
+      return links[i]->getAction();
     }
   }
   return NULL;
@@ -560,6 +623,7 @@ static GString *getFileSpecName(Object *fileSpecObj) {
       name = obj1.getString()->copy();
     else
       error(-1, "Illegal file spec in link");
+    obj1.free();
 
   // error
   } else {

@@ -10,28 +10,29 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <GString.h>
-#include <gfile.h>
-#include <LTKBox.h>
-#include <LTKLabel.h>
-#include <LTKList.h>
-#include <LTKScrollbar.h>
-#include <LTKTextIn.h>
-#include <LTKEmpty.h>
-#include <LTKFileReq.h>
+#include "GString.h"
+#include "gfile.h"
+#include "LTKBox.h"
+#include "LTKLabel.h"
+#include "LTKList.h"
+#include "LTKScrollbar.h"
+#include "LTKTextIn.h"
+#include "LTKEmpty.h"
+#include "LTKFileReq.h"
 
 #define dirLabelLen 50
 
-LTKFileReq::LTKFileReq(char *name1, int widgetNum1,
-		       LTKStringValCbk selectCbk1, char *fontName1):
-    LTKCompoundWidget(name1, widgetNum1) {
-  selectCbk = selectCbk1;
-  fontName = fontName1;
+LTKFileReq::LTKFileReq(char *nameA, int widgetNumA,
+		       LTKStringValCbk selectCbkA, char *fontNameA):
+    LTKCompoundWidget(nameA, widgetNumA) {
+  selectCbk = selectCbkA;
+  fontName = fontNameA;
   dir = getCurrentDir();
   selection = NULL;
   makeWidgets();
@@ -44,7 +45,7 @@ void LTKFileReq::makeWidgets() {
   LTKBox *fileNameBox1, *fileNameBox2, *fileNameBox;
   LTKBox *listBox, *hScrollBox, *vScrollBox, *emptyBox, *listBox2;
 
-  dirLabel = new LTKLabel(NULL, 0, -1, NULL, "Dir:");
+  dirLabel = new LTKLabel(NULL, 0, ltkLabelStatic, -1, NULL, "Dir:");
   dirNameBox1 = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0,
 			   dirLabel);
   dirName = new LTKTextIn(NULL, 0, 40, fontName, &dirNameCbk, NULL);
@@ -70,7 +71,7 @@ void LTKFileReq::makeWidgets() {
   listBox2 = new LTKBox(NULL, 2, 2, 0, 0, 0, 2, ltkBorderNone, 1, 1,
 			listBox, vScrollBox, hScrollBox, emptyBox);
 
-  fileLabel = new LTKLabel(NULL, 0, -1, NULL, "File:");
+  fileLabel = new LTKLabel(NULL, 0, ltkLabelStatic, -1, NULL, "File:");
   fileNameBox1 = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0,
 			    fileLabel);
   fileName = new LTKTextIn(NULL, 0, 40, fontName, NULL, NULL);
@@ -102,9 +103,9 @@ GString *LTKFileReq::getSelection() {
   return selection;
 }
 
-void LTKFileReq::setDir(GString *dir1) {
+void LTKFileReq::setDir(GString *dirA) {
   delete dir;
-  dir = dir1->copy();
+  dir = dirA->copy();
   if (mapped)
     loadDirList();
 }
@@ -169,7 +170,7 @@ void LTKFileReq::loadDirList() {
 
 }
 
-void LTKFileReq::clickCbk(LTKWidget *widget, int widgetNum, int line) {
+void LTKFileReq::clickCbk(LTKWidget *widget, int widgetNumA, int line) {
   LTKFileReq *fileReq;
 
   fileReq = (LTKFileReq *)widget->getCompoundParent();
@@ -179,7 +180,7 @@ void LTKFileReq::clickCbk(LTKWidget *widget, int widgetNum, int line) {
     fileReq->fileName->setText("");
 }
 
-void LTKFileReq::dblClickCbk(LTKWidget *widget, int widgetNum, int line) {
+void LTKFileReq::dblClickCbk(LTKWidget *widget, int widgetNumA, int line) {
   LTKFileReq *fileReq;
   GString *subDir;
 
@@ -193,11 +194,11 @@ void LTKFileReq::dblClickCbk(LTKWidget *widget, int widgetNum, int line) {
     fileReq->loadDirList();
   } else {
     if (fileReq->selectCbk)
-      (*fileReq->selectCbk)(widget, widgetNum, fileReq->getSelection());
+      (*fileReq->selectCbk)(widget, widgetNumA, fileReq->getSelection());
   }
 }
 
-void LTKFileReq::dirNameCbk(LTKWidget *widget, int widgetNum, GString *val) {
+void LTKFileReq::dirNameCbk(LTKWidget *widget, int widgetNumA, GString *val) {
   LTKFileReq *fileReq;
 
   fileReq = (LTKFileReq *)widget->getCompoundParent();
@@ -206,7 +207,7 @@ void LTKFileReq::dirNameCbk(LTKWidget *widget, int widgetNum, GString *val) {
   fileReq->loadDirList();
 }
 
-void LTKFileReq::hScrollCbk(LTKWidget *widget, int widgetNum, int val) {
+void LTKFileReq::hScrollCbk(LTKWidget *widget, int widgetNumA, int val) {
   LTKFileReq *fileReq;
 
   fileReq = (LTKFileReq *)widget->getCompoundParent();
@@ -214,7 +215,7 @@ void LTKFileReq::hScrollCbk(LTKWidget *widget, int widgetNum, int val) {
   XSync(widget->getDisplay(), False);
 }
 
-void LTKFileReq::vScrollCbk(LTKWidget *widget, int widgetNum, int val) {
+void LTKFileReq::vScrollCbk(LTKWidget *widget, int widgetNumA, int val) {
   LTKFileReq *fileReq;
 
   fileReq = (LTKFileReq *)widget->getCompoundParent();

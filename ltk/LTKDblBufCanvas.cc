@@ -10,19 +10,20 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <LTKWindow.h>
-#include <LTKDblBufCanvas.h>
+#include "LTKWindow.h"
+#include "LTKDblBufCanvas.h"
 
-LTKDblBufCanvas::LTKDblBufCanvas(char *name1, int widgetNum1,
-				 int minWidth1, int minHeight1):
-    LTKWidget(name1, widgetNum1) {
-  minWidth = minWidth1;
-  minHeight = minHeight1;
+LTKDblBufCanvas::LTKDblBufCanvas(char *nameA, int widgetNumA,
+				 int minWidthA, int minHeightA):
+    LTKWidget(nameA, widgetNumA) {
+  minWidth = minWidthA;
+  minHeight = minHeightA;
   pixmap = None;
 }
 

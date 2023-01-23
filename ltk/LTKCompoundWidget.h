@@ -17,8 +17,8 @@
 
 #include <stddef.h>
 #include <X11/Xlib.h>
-#include <gtypes.h>
-#include <LTKWidget.h>
+#include "gtypes.h"
+#include "LTKWidget.h"
 
 //------------------------------------------------------------------------
 // LTKCompoundWidget
@@ -29,17 +29,17 @@ public:
 
   //---------- constructor and destructor ----------
 
-  LTKCompoundWidget(char *name1, int widgetNum1);
+  LTKCompoundWidget(char *nameA, int widgetNumA);
   virtual ~LTKCompoundWidget();
 
   //---------- access ----------
 
-  virtual void setParent(LTKWindow *parent1);
+  virtual void setParent(LTKWindow *parentA);
 
   //---------- layout ----------
 
   virtual void layout1();
-  virtual void layout2(int x1, int y1, int width1, int height1);
+  virtual void layout2(int xA, int yA, int widthA, int heightA);
   virtual void layout3();
   virtual void map();
 

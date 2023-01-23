@@ -15,8 +15,20 @@
 
 #include <stddef.h>
 #include <X11/Xlib.h>
-#include <GString.h>
-#include <LTKWidget.h>
+#include "GString.h"
+#include "LTKWidget.h"
+
+//------------------------------------------------------------------------
+// label size constraint
+//------------------------------------------------------------------------
+
+enum LTKLabelSize {
+  ltkLabelStatic,		// static text (maxLength is ignored)
+  ltkLabelFixedWidth,		// fixed width, set by layout
+				//   (maxLength is ignored)
+  ltkLabelMaxLength		// width is set to accomodate up
+				//   to maxLength chars
+};
 
 //------------------------------------------------------------------------
 // LTKLabel
@@ -27,14 +39,15 @@ public:
 
   //---------- constructor and destructor ----------
 
-  LTKLabel(char *name1, int widgetNum1,
-	   int maxLength1, char *fontName1, char *text1);
+  LTKLabel(char *nameA, int widgetNumA,
+	   LTKLabelSize sizeA, int maxLengthA,
+	   char *fontNameA, char *textA);
 
   virtual ~LTKLabel();
 
   //---------- special access ----------
 
-  void setText(char *text1);
+  void setText(char *textA);
 
   //---------- layout ----------
 
@@ -46,10 +59,11 @@ public:
 
 protected:
 
+  LTKLabelSize size;		// size constraint
   int maxLength;		// max label length
   GString *text;		// the label text
   int length;			// displayed length
-  int textWidth, textHeight;	// size of text
+  int textHeight;		// size of text
   int textBase;			// baseline offset
 
   char *fontName;		// non-NULL if using a custom font

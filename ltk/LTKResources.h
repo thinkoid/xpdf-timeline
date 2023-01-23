@@ -17,35 +17,43 @@
 #include <X11/Xlib.h>
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
-#include <GString.h>
+#include "GString.h"
 
 extern void ltkGetCmdLineResources(XrmDatabase *cmdLineDB,
 				   XrmOptionDescRec *opts,
 				   int numOpts, GString *appName,
 				   int *argc, char *argv[]);
 
-extern void ltkGetOtherResources(Display *display,
+extern void ltkGetOtherResources(Display *display, GString *appClass,
 				 XrmDatabase cmdLineDB, XrmDatabase *db);
 
-extern GString *ltkGetStringResource(XrmDatabase db, GString *appName,
+extern GString *ltkGetStringResource(XrmDatabase db,
+				     GString *appName, GString *appClass,
 				     char *instName, char *def);
 
-extern int ltkGetIntResource(XrmDatabase db, GString *appName,
+extern int ltkGetIntResource(XrmDatabase db,
+			     GString *appName, GString *appClass,
 			     char *instName, int def);
 
+extern GBool ltkGetBoolResource(XrmDatabase db,
+				GString *appName, GString *appClass,
+				char *instName, GBool def);
+
 extern unsigned long ltkGetColorResource(
-                XrmDatabase db, GString *appName,
+                XrmDatabase db, GString *appName, GString *appClass,
                 char *instName,
                 Display *display, int screenNum,
                 char *def1, unsigned long def2,
                 XColor *xcol);
 
-extern XFontStruct *ltkGetFontResouce(XrmDatabase db, GString *appName,
+extern XFontStruct *ltkGetFontResouce(XrmDatabase db,
+				      GString *appName, GString *appClass,
 				      char *instName,
 				      Display *display, int screenNum,
 				      char *def);
 
-extern void ltkGetGeometryResource(XrmDatabase db, GString *appName,
+extern void ltkGetGeometryResource(XrmDatabase db,
+				   GString *appName, GString *appClass,
 				   char *instName,
 				   Display *display, int screenNum,
 				   int *x, int *y,

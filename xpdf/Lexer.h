@@ -16,6 +16,8 @@
 #include "Object.h"
 #include "Stream.h"
 
+class XRef;
+
 #define tokBufSize 128		// size of token buffer
 
 //------------------------------------------------------------------------
@@ -27,11 +29,11 @@ public:
 
   // Construct a lexer for a single stream.  Deletes the stream when
   // lexer is deleted.
-  Lexer(Stream *str);
+  Lexer(XRef *xref, Stream *str);
 
   // Construct a lexer for a stream or array of streams (assumes obj
   // is either a stream or array of streams).
-  Lexer(Object *obj);
+  Lexer(XRef *xref, Object *obj);
 
   // Destructor.
   ~Lexer();
@@ -46,13 +48,16 @@ public:
   void skipChar() { getChar(); }
 
   // Get stream.
-  Stream *getStream() { return curStr.getStream(); }
+  Stream *getStream()
+    { return curStr.isNone() ? (Stream *)NULL : curStr.getStream(); }
 
   // Get current position in file.
-  int getPos() { return curStr.isNone() ? -1 : curStr.streamGetPos(); }
+  int getPos()
+    { return curStr.isNone() ? -1 : curStr.streamGetPos(); }
 
   // Set position in file.
-  void setPos(int pos) { curStr.streamSetPos(pos); }
+  void setPos(int pos)
+    { if (!curStr.isNone()) curStr.streamSetPos(pos); }
 
 private:
 

@@ -18,6 +18,14 @@
 class Dict;
 class XRef;
 class OutputDev;
+class Links;
+class Catalog;
+
+//------------------------------------------------------------------------
+
+struct PDFRectangle {
+  double x1, y1, x2, y2;
+};
 
 //------------------------------------------------------------------------
 // PageAttrs
@@ -35,23 +43,28 @@ public:
   ~PageAttrs();
 
   // Accessors.
-  int getX1() { return x1; }
-  int getY1() { return y1; }
-  int getX2() { return x2; }
-  int getY2() { return y2; }
-  GBool isCropped() { return cropX1 < cropX2; }
-  int getCropX1() { return cropX1; }
-  int getCropY1() { return cropY1; }
-  int getCropX2() { return cropX2; }
-  int getCropY2() { return cropY2; }
+  PDFRectangle *getBox() { return limitToCropBox ? &cropBox : &mediaBox; }
+  PDFRectangle *getMediaBox() { return &mediaBox; }
+  PDFRectangle *getCropBox() { return &cropBox; }
+  GBool isCropped() { return haveCropBox; }
+  PDFRectangle *getBleedBox() { return &bleedBox; }
+  PDFRectangle *getTrimBox() { return &trimBox; }
+  PDFRectangle *getArtBox() { return &artBox; }
   int getRotate() { return rotate; }
   Dict *getResourceDict()
     { return resources.isDict() ? resources.getDict() : (Dict *)NULL; }
 
 private:
 
-  int x1, y1, x2, y2;
-  int cropX1, cropY1, cropX2, cropY2;
+  GBool readBox(Dict *dict, char *key, PDFRectangle *box);
+
+  PDFRectangle mediaBox;
+  PDFRectangle cropBox;
+  GBool haveCropBox;
+  GBool limitToCropBox;
+  PDFRectangle bleedBox;
+  PDFRectangle trimBox;
+  PDFRectangle artBox;
   int rotate;
   Object resources;
 };
@@ -64,7 +77,8 @@ class Page {
 public:
 
   // Constructor.
-  Page(int num1, Dict *pageDict, PageAttrs *attrs1);
+  Page(XRef *xrefA, int numA, Dict *pageDict, PageAttrs *attrsA,
+       GBool printCommandsA);
 
   // Destructor.
   ~Page();
@@ -73,34 +87,38 @@ public:
   GBool isOk() { return ok; }
 
   // Get page parameters.
-  int getX1() { return attrs->getX1(); }
-  int getY1() { return attrs->getY1(); }
-  int getX2() { return attrs->getX2(); }
-  int getY2() { return attrs->getY2(); }
+  PDFRectangle *getBox() { return attrs->getBox(); }
+  PDFRectangle *getMediaBox() { return attrs->getMediaBox(); }
+  PDFRectangle *getCropBox() { return attrs->getCropBox(); }
   GBool isCropped() { return attrs->isCropped(); }
-  int getCropX1() { return attrs->getCropX1(); }
-  int getCropY1() { return attrs->getCropY1(); }
-  int getCropX2() { return attrs->getCropX2(); }
-  int getCropY2() { return attrs->getCropY2(); }
-  int getWidth() { return attrs->getX2() - attrs->getX1(); }
-  int getHeight() { return attrs->getY2() - attrs->getY1(); }
+  double getWidth() { return attrs->getBox()->x2 - attrs->getBox()->x1; }
+  double getHeight() { return attrs->getBox()->y2 - attrs->getBox()->y1; }
+  PDFRectangle *getBleedBox() { return attrs->getBleedBox(); }
+  PDFRectangle *getTrimBox() { return attrs->getTrimBox(); }
+  PDFRectangle *getArtBox() { return attrs->getArtBox(); }
   int getRotate() { return attrs->getRotate(); }
 
-  // Get font dictionary.
-  Object *getFontDict(Object *obj);
+  // Get resource dictionary.
+  Dict *getResourceDict() { return attrs->getResourceDict(); }
 
   // Get annotations array.
-  Object *getAnnots(Object *obj) { return annots.fetch(obj); }
+  Object *getAnnots(Object *obj) { return annots.fetch(xref, obj); }
+
+  // Get contents.
+  Object *getContents(Object *obj) { return contents.fetch(xref, obj); }
 
   // Display a page.
-  void display(OutputDev *out, int dpi, int rotate);
+  void display(OutputDev *out, double dpi, int rotate,
+	       Links *links, Catalog *catalog);
 
 private:
 
+  XRef *xref;			// the xref table for this PDF file
   int num;			// page number
   PageAttrs *attrs;		// page attributes
   Object annots;		// annotations array
   Object contents;		// page contents
+  GBool printCommands;		// print the drawing commands (for debugging)
   GBool ok;			// true if page is valid
 };
 

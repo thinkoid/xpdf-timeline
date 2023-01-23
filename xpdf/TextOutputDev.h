@@ -14,11 +14,11 @@
 #endif
 
 #include <stdio.h>
-#include <gtypes.h>
+#include "gtypes.h"
+#include "GfxFont.h"
 #include "OutputDev.h"
 
 class GfxState;
-class GfxFont;
 class GString;
 
 //------------------------------------------------------------------------
@@ -29,27 +29,27 @@ class TextString {
 public:
 
   // Constructor.
-  TextString(GfxState *state);
+  TextString(GfxState *state, double fontSize);
 
   // Destructor.
   ~TextString();
 
   // Add a character to the string.
   void addChar(GfxState *state, double x, double y,
-	       double dx, double dy,
-	       Guchar c, GBool useASCII7);
+	       double dx, double dy, Unicode u);
 
 private:
 
   double xMin, xMax;		// bounding box x coordinates
   double yMin, yMax;		// bounding box y coordinates
   int col;			// starting column
-  GString *text;		// the text
+  Unicode *text;		// the text
   double *xRight;		// right-hand x coord of each char
+  int len;			// length of text and xRight
+  int size;			// size of text and xRight arrays
   TextString *yxNext;		// next string in y-major order
   TextString *xyNext;		// next string in x-major order
 
-  friend class TextBlock;
   friend class TextPage;
 };
 
@@ -61,29 +61,34 @@ class TextPage {
 public:
 
   // Constructor.
-  TextPage(GBool useASCII71);
+  TextPage(GBool rawOrderA);
 
   // Destructor.
   ~TextPage();
 
+  // Update the current font.
+  void updateFont(GfxState *state);
+
   // Begin a new string.
-  void beginString(GfxState *state, GString *s);
+  void beginString(GfxState *state);
 
   // Add a character to the current string.
   void addChar(GfxState *state, double x, double y,
-	       double dx, double dy, Guchar c);
+	       double dx, double dy, Unicode *u, int uLen);
 
   // End the current string, sorting it into the list of strings.
   void endString();
 
   // Coalesce strings that look like parts of the same line.
   void coalesce();
-  // Find a string.  If <top> is true, starts looking at <xMin>,<yMin>;
-  // otherwise starts looking at top of page.  If <bottom> is true,
-  // stops looking at <xMax>,<yMax>; otherwise stops looking at bottom
-  // of page.  If found, sets the text bounding rectange and returns
-  // true; otherwise returns false.
-  GBool findText(char *s, GBool top, GBool bottom,
+
+  // Find a string.  If <top> is true, starts looking at top of page;
+  // otherwise starts looking at <xMin>,<yMin>.  If <bottom> is true,
+  // stops looking at bottom of page; otherwise stops looking at
+  // <xMax>,<yMax>.  If found, sets the text bounding rectange and
+  // returns true; otherwise returns false.
+  GBool findText(Unicode *s, int len,
+		 GBool top, GBool bottom,
 		 double *xMin, double *yMin,
 		 double *xMax, double *yMax);
 
@@ -99,12 +104,16 @@ public:
 
 private:
 
-  GBool useASCII7;		// use 7-bit ASCII?
+  GBool rawOrder;		// keep strings in content stream order
 
   TextString *curStr;		// currently active string
+  double fontSize;		// current font size
 
   TextString *yxStrings;	// strings in y-major order
   TextString *xyStrings;	// strings in x-major order
+  TextString *yxCur1, *yxCur2;	// cursors for yxStrings list
+
+  int nest;			// current nesting level (for Type 3 fonts)
 };
 
 //------------------------------------------------------------------------
@@ -114,11 +123,10 @@ private:
 class TextOutputDev: public OutputDev {
 public:
 
-  // Open a text output file.  If <fileName> is NULL, no file is written
-  // (this is useful, e.g., for searching text).  If <useASCII7> is true,
-  // text is converted to 7-bit ASCII; otherwise, text is converted to
-  // 8-bit ISO Latin-1.
-  TextOutputDev(char *fileName, GBool useASCII7);
+  // Open a text output file.  If <fileName> is NULL, no file is
+  // written (this is useful, e.g., for searching text).  If
+  // <rawOrder> is true, the text is kept in content stream order.
+  TextOutputDev(char *fileName, GBool rawOrderA, GBool append);
 
   // Destructor.
   virtual ~TextOutputDev();
@@ -135,6 +143,9 @@ public:
   // Does this device use drawChar() or drawString()?
   virtual GBool useDrawChar() { return gTrue; }
 
+  // Does this device need non-text content?
+  virtual GBool needNonText() { return gFalse; }
+
   //----- initialization and control
 
   // Start a page.
@@ -143,20 +154,26 @@ public:
   // End a page.
   virtual void endPage();
 
+  //----- update text state
+  virtual void updateFont(GfxState *state);
+
   //----- text drawing
   virtual void beginString(GfxState *state, GString *s);
   virtual void endString(GfxState *state);
   virtual void drawChar(GfxState *state, double x, double y,
-			double dx, double dy, Guchar c);
+			double dx, double dy,
+			double originX, double originY,
+			CharCode c, Unicode *u, int uLen);
 
   //----- special access
 
-  // Find a string.  If <top> is true, starts looking at <xMin>,<yMin>;
-  // otherwise starts looking at top of page.  If <bottom> is true,
-  // stops looking at <xMax>,<yMax>; otherwise stops looking at bottom
-  // of page.  If found, sets the text bounding rectange and returns
-  // true; otherwise returns false.
-  GBool findText(char *s, GBool top, GBool bottom,
+  // Find a string.  If <top> is true, starts looking at top of page;
+  // otherwise starts looking at <xMin>,<yMin>.  If <bottom> is true,
+  // stops looking at bottom of page; otherwise stops looking at
+  // <xMax>,<yMax>.  If found, sets the text bounding rectange and
+  // returns true; otherwise returns false.
+  GBool findText(Unicode *s, int len,
+		 GBool top, GBool bottom,
 		 double *xMin, double *yMin,
 		 double *xMax, double *yMax);
 
@@ -165,6 +182,7 @@ private:
   FILE *f;			// text file
   GBool needClose;		// need to close the file?
   TextPage *text;		// text for the current page
+  GBool rawOrder;		// keep text in content stream order
   GBool ok;			// set up ok?
 };
 

@@ -9,17 +9,18 @@
 //
 //========================================================================
 
-#define VERSION "0.7"
+#define VERSION "1.00"
 
+#include <aconf.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <gtypes.h>
-#include <gmem.h>
-#include <GString.h>
+#include "gtypes.h"
+#include "gmem.h"
+#include "GString.h"
 
 enum ArgKind {
   argVal,			// arg with value
@@ -107,8 +108,8 @@ static GBool readTopLevel() {
 static GBool readWindow(Block *block) {
   int i;
 
-  printf("%s *%s(LTKApp *app) {\n", block->type, block->args[0].s);
-  printf("  return new %s(app, ", block->type);
+  printf("%s *%s(LTKApp *a) {\n", block->type, block->args[0].s);
+  printf("  return new %s(a, ", block->type);
   for (i = 1; i < block->numArgs; ++i) {
     printf("%s,%c", block->args[i].s,
 	   i < block->numArgs - 1 ? ' ' : '\n');

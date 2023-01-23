@@ -6,9 +6,9 @@
 //
 //========================================================================
 
-#define windowType "LTKWindow"
-#define menuType   "LTKMenu"
-#define boxType    "LTKBox"
+#define windowType     "LTKWindow"
+#define menuType       "LTKMenu"
+#define boxType        "LTKBox"
 
 ArgDesc windowArgs[] = {
   {"func",           argVal,     gTrue,  "missingFunc"},
@@ -110,7 +110,10 @@ ArgDesc fileReqArgs[] = {
 ArgDesc labelArgs[] = {
   {"name",           argVal,     gFalse, "NULL"},
   {"num",            argVal,     gFalse, "0"},
-  {"length",         argVal,     gFalse, "-1"},
+  {"static",         argSel,     gFalse, "ltkLabelStatic"},
+  {"fixedWidth",     argSel,     gFalse, "ltkLabelFixedWidth"},
+  {"maxLength",      argLastSel, gFalse, "ltkLabelMaxLength"},
+  {"length",         argVal,     gFalse, "8"},
   {"font",           argVal,     gFalse, "NULL"},
   {"text",           argVal,     gFalse, "NULL"},
   {NULL}
@@ -123,6 +126,13 @@ ArgDesc listArgs[] = {
   {"h",              argVal,     gFalse, "4"},
   {"selection",      argVal,     gFalse, "gFalse"},
   {"font",           argVal,     gFalse, "NULL"},
+  {NULL}
+};
+
+ArgDesc menuButtonArgs[] = {
+  {"name",           argVal,     gFalse, "NULL"},
+  {"num",            argVal,     gFalse, "0"},
+  {"menu",           argVal,     gTrue,  "NULL"},
   {NULL}
 };
 
@@ -198,6 +208,7 @@ BlockDesc widgetTab[] = {
   {"FileReq",             "LTKFileReq",             fileReqArgs},
   {"Label",               "LTKLabel",               labelArgs},
   {"List",                "LTKList",                listArgs},
+  {"MenuButton",          "LTKMenuButton",          menuButtonArgs},
   {"Scrollbar",           "LTKScrollbar",           scrollbarArgs},
   {"ScrollingCanvas",     "LTKScrollingCanvas",     scrollingCanvasArgs},
   {"TextIn",              "LTKTextIn",              textInArgs},

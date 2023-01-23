@@ -17,14 +17,15 @@
 
 #include <stddef.h>
 #include <X11/Xlib.h>
-#include <gtypes.h>
-#include <GString.h>
+#include "gtypes.h"
+#include "GString.h"
 
 class LTKWindow;
+class LTKWidget;
 class LTKMenuItem;
 
 //------------------------------------------------------------------------
-// callback type
+// callback types
 //------------------------------------------------------------------------
 
 // Menu item selection.
@@ -40,7 +41,7 @@ public:
   //---------- constructor and destructor ----------
 
   // Constructor.  The extra args are the list of menu items.
-  LTKMenu(char *title1, int numItems1, ...);
+  LTKMenu(char *titleA, int numItemsA, ...);
 
   // Destructor.
   ~LTKMenu();
@@ -48,19 +49,23 @@ public:
   //---------- access ----------
 
   Window getXWindow() { return xwin; }
+  int getNumItems() { return numItems; }
+  LTKMenuItem *getItem(int i) { return items[i]; }
+  void setParentWidget(LTKWidget *widgetA) { widget = widgetA; }
+  LTKWidget *getParentWidget() { return widget; }
 
   //---------- drawing ----------
 
   // Post the menu.  Put the top left corner as close as possible
-  // to <x1>,<y1>.
-  void post(LTKWindow *win1, int x1, int y1, LTKMenu *parent1);
+  // to <x>,<y>.
+  void post(LTKWindow *winA, int xA, int yA, LTKMenu *parentA);
 
   //---------- event handlers ----------
 
   void redraw();
   void buttonPress(int mx, int my, int button, GBool dblClick);
   void buttonRelease(int mx, int my, int button, GBool click);
-  void mouseMove(int mx, int my, int pressedBtn);
+  void mouseMove(int mx, int my, int btn);
 
 private:
 
@@ -85,6 +90,8 @@ private:
   int currentItem;		// currently selected item or -1 if none
   int currentY;			// y coordinate of current item
   LTKMenu *currentSubmenu;	// currently posted submenu
+
+  LTKWidget *widget;		// parent widget (if any)
 };
 
 //------------------------------------------------------------------------
@@ -97,12 +104,17 @@ public:
   //---------- constructor ----------
 
   // Constructor.
-  LTKMenuItem(char *text1, char *shortcut1, int itemNum1,
-	      LTKMenuCbk cbk1, LTKMenu *submenu1);
+  LTKMenuItem(char *textA, char *shortcutA, int itemNumA,
+	      LTKMenuCbk cbkA, LTKMenu *submenuA);
 
   //---------- access ----------
 
   int getItemNum() { return itemNum; }
+  char *getText() { return text; }
+  LTKMenuCbk getCbk() { return cbk; }
+  void setCbk(LTKMenuCbk cbkA) { cbk = cbkA; }
+  LTKMenu *getParent() { return parent; }
+  void setParent(LTKMenu *parentA) { parent = parentA; }
 
 private:
 
@@ -114,6 +126,7 @@ private:
   int itemNum;			// item number
   LTKMenuCbk cbk;		// selection callback
   LTKMenu *submenu;		// pointer to submenu, or NULL if none
+  LTKMenu *parent;		// parent menu
 
   friend class LTKMenu;
 };

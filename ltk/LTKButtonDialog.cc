@@ -10,27 +10,28 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <LTKApp.h>
-#include <LTKLabel.h>
-#include <LTKButton.h>
-#include <LTKEmpty.h>
-#include <LTKBox.h>
-#include <LTKWindow.h>
-#include <LTKBorder.h>
-#include <LTKButtonDialog.h>
+#include "LTKApp.h"
+#include "LTKLabel.h"
+#include "LTKButton.h"
+#include "LTKEmpty.h"
+#include "LTKBox.h"
+#include "LTKWindow.h"
+#include "LTKBorder.h"
+#include "LTKButtonDialog.h"
 
 //------------------------------------------------------------------------
 // LTKButtonDialog
 //------------------------------------------------------------------------
 
-LTKButtonDialog::LTKButtonDialog(LTKWindow *overWin1, char *title,
+LTKButtonDialog::LTKButtonDialog(LTKWindow *overWinA, char *title,
 				 char *line1, char *line2, char *line3,
 				 char *trueBtnLabel, char *falseBtnLabel) {
   LTKBox *box;
 
-  overWin = overWin1;
+  overWin = overWinA;
   widget = new LTKButtonDialogWidget(NULL, 0, line1, line2, line3,
 				     trueBtnLabel, falseBtnLabel);
   box = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0, widget);
@@ -54,12 +55,12 @@ GBool LTKButtonDialog::go() {
 // LTKButtonDialogWidget
 //------------------------------------------------------------------------
 
-LTKButtonDialogWidget::LTKButtonDialogWidget(char *name1, int widgetNum1,
+LTKButtonDialogWidget::LTKButtonDialogWidget(char *nameA, int widgetNumA,
 					     char *line1, char *line2,
 					     char *line3,
 					     char *trueBtnLabel,
 					     char *falseBtnLabel):
-    LTKCompoundWidget(name1, widgetNum1) {
+    LTKCompoundWidget(nameA, widgetNumA) {
   LTKLabel *label1, *label2, *label3;
   LTKBox *labelBox1, *labelBox2, *labelBox3, *labelBox;
   LTKButton *trueBtn, *falseBtn;
@@ -68,15 +69,15 @@ LTKButtonDialogWidget::LTKButtonDialogWidget(char *name1, int widgetNum1,
 
   labelBox1 = labelBox2 = labelBox3 = NULL;
   if (line1) {
-    label1 = new LTKLabel(NULL, 0, -1, NULL, line1);
+    label1 = new LTKLabel(NULL, 0, ltkLabelStatic, -1, NULL, line1);
     labelBox1 = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0,
 			   label1);
     if (line2) {
-      label2 = new LTKLabel(NULL, 0, -1, NULL, line2);
+      label2 = new LTKLabel(NULL, 0, ltkLabelStatic, -1, NULL, line2);
       labelBox2 = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0,
 			     label2);
       if (line3) {
-	label3 = new LTKLabel(NULL, 0, -1, NULL, line3);
+	label3 = new LTKLabel(NULL, 0, ltkLabelStatic, -1, NULL, line3);
 	labelBox3 = new LTKBox(NULL, 1, 1, 0, 0, 0, 0, ltkBorderNone, 0, 0,
 			       label3);
 	labelBox = new LTKBox(NULL, 1, 3, 2, 2, 2, 2, ltkBorderNone, 0, 0,

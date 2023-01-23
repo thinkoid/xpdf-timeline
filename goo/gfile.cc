@@ -8,21 +8,33 @@
 //
 //========================================================================
 
-#include <stdlib.h>
-#include <stddef.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <limits.h>
-#include <string.h>
-#ifndef VMS
-#include <pwd.h>
-#endif
-#if defined(VMS) && (__DECCXX_VER < 50200000)
-#include <unixlib.h>
-#endif
-#include <GString.h>
-#include <gfile.h>
+#include <aconf.h>
+
+#ifdef WIN32
+   extern "C" {
+#  ifndef _MSC_VER
+#    include <kpathsea/win32lib.h>
+#  endif
+   }
+#else // !WIN32
+#  if defined(MACOS)
+#    include <sys/stat.h>
+#  elif !defined(ACORN)
+#    include <sys/types.h>
+#    include <sys/stat.h>
+#    include <fcntl.h>
+#  endif
+#  include <limits.h>
+#  include <string.h>
+#  if !defined(VMS) && !defined(ACORN) && !defined(MACOS)
+#    include <pwd.h>
+#  endif
+#  if defined(VMS) && (__DECCXX_VER < 50200000)
+#    include <unixlib.h>
+#  endif
+#endif // WIN32
+#include "GString.h"
+#include "gfile.h"
 
 // Some systems don't define this, so just make it something reasonably
 // large.
@@ -37,8 +49,8 @@ GString *getHomeDir() {
   //---------- VMS ----------
   return new GString("SYS$LOGIN:");
 
-#elif defined(__EMX__)
-  //---------- OS/2+EMX ----------
+#elif defined(__EMX__) || defined(WIN32)
+  //---------- OS/2+EMX and Win32 ----------
   char *s;
   GString *ret;
 
@@ -47,6 +59,14 @@ GString *getHomeDir() {
   else
     ret = new GString(".");
   return ret;
+
+#elif defined(ACORN)
+  //---------- RISCOS ----------
+  return new GString("@");
+
+#elif defined(MACOS)
+  //---------- MacOS ----------
+  return new GString(":");
 
 #else
   //---------- Unix ----------
@@ -73,17 +93,23 @@ GString *getHomeDir() {
 GString *getCurrentDir() {
   char buf[PATH_MAX+1];
 
-#ifdef __EMX__
-  if (!_getcwd2(buf, sizeof(buf)))
+#if defined(__EMX__)
+  if (_getcwd2(buf, sizeof(buf)))
+#elif defined(WIN32)
+  if (GetCurrentDirectory(sizeof(buf), buf))
+#elif defined(ACORN)
+  if (strcpy(buf, "@"))
+#elif defined(MACOS)
+  if (strcpy(buf, ":"))
 #else
-  if (!getcwd(buf, sizeof(buf)))
+  if (getcwd(buf, sizeof(buf)))
 #endif
-    return new GString();
-  return new GString(buf);
+    return new GString(buf);
+  return new GString();
 }
 
 GString *appendToPath(GString *path, char *fileName) {
-#ifdef VMS
+#if defined(VMS)
   //---------- VMS ----------
   //~ this should handle everything necessary for file
   //~ requesters, but it's certainly not complete
@@ -123,8 +149,57 @@ GString *appendToPath(GString *path, char *fileName) {
   }
   return path;
 
-#else
-  //---------- Unix and OS/2+EMX ----------
+#elif defined(WIN32)
+  //---------- Win32 ----------
+  GString *tmp;
+  char buf[256];
+  char *fp;
+
+  tmp = new GString(path);
+  tmp->append('/');
+  tmp->append(fileName);
+  GetFullPathName(tmp->getCString(), sizeof(buf), buf, &fp);
+  delete tmp;
+  path->clear();
+  path->append(buf);
+  return path;
+
+#elif defined(ACORN)
+  //---------- RISCOS ----------
+  char *p;
+  int i;
+
+  path->append(".");
+  i = path->getLength();
+  path->append(fileName);
+  for (p = path->getCString() + i; *p; ++p) {
+    if (*p == '/') {
+      *p = '.';
+    } else if (*p == '.') {
+      *p = '/';
+    }
+  }
+  return path;
+
+#elif defined(MACOS)
+  //---------- MacOS ----------
+  char *p;
+  int i;
+
+  path->append(":");
+  i = path->getLength();
+  path->append(fileName);
+  for (p = path->getCString() + i; *p; ++p) {
+    if (*p == '/') {
+      *p = ':';
+    } else if (*p == '.') {
+      *p = ':';
+    }
+  }
+  return path;
+
+#elif defined(__EMX__)
+  //---------- OS/2+EMX ----------
   int i;
 
   // appending "." does nothing
@@ -134,36 +209,65 @@ GString *appendToPath(GString *path, char *fileName) {
   // appending ".." goes up one directory
   if (!strcmp(fileName, "..")) {
     for (i = path->getLength() - 2; i >= 0; --i) {
-#ifdef __EMX__
       if (path->getChar(i) == '/' || path->getChar(i) == '\\' ||
 	  path->getChar(i) == ':')
-#else
-      if (path->getChar(i) == '/')
-#endif
 	break;
     }
-    if (i >= 0) {
-#ifdef __EMX__
-      if (path->getChar(i) == ':')
-	++i;
-#endif
-      path->del(i, path->getLength() - i);
+    if (i <= 0) {
+      if (path->getChar(0) == '/' || path->getChar(0) == '\\') {
+	path->del(1, path->getLength() - 1);
+      } else if (path->getLength() >= 2 && path->getChar(1) == ':') {
+	path->del(2, path->getLength() - 2);
+      } else {
+	path->clear();
+	path->append("..");
+      }
     } else {
-      path->clear();
-      path->append("..");
+      if (path->getChar(i-1) == ':')
+	++i;
+      path->del(i, path->getLength() - i);
     }
     return path;
   }
 
   // otherwise, append "/" and new path component
-#ifdef __EMX__
   if (path->getLength() > 0 &&
       path->getChar(path->getLength() - 1) != '/' &&
       path->getChar(path->getLength() - 1) != '\\')
+    path->append('/');
+  path->append(fileName);
+  return path;
+
 #else
+  //---------- Unix ----------
+  int i;
+
+  // appending "." does nothing
+  if (!strcmp(fileName, "."))
+    return path;
+
+  // appending ".." goes up one directory
+  if (!strcmp(fileName, "..")) {
+    for (i = path->getLength() - 2; i >= 0; --i) {
+      if (path->getChar(i) == '/')
+	break;
+    }
+    if (i <= 0) {
+      if (path->getChar(0) == '/') {
+	path->del(1, path->getLength() - 1);
+      } else {
+	path->clear();
+	path->append("..");
+      }
+    } else {
+      path->del(i, path->getLength() - i);
+    }
+    return path;
+  }
+
+  // otherwise, append "/" and new path component
   if (path->getLength() > 0 &&
       path->getChar(path->getLength() - 1) != '/')
-#endif
     path->append('/');
   path->append(fileName);
   return path;
@@ -181,8 +285,8 @@ GString *grabPath(char *fileName) {
     return new GString(fileName, p + 1 - fileName);
   return new GString();
 
-#elif defined(__EMX__)
-  //---------- OS/2+EMX ----------
+#elif defined(__EMX__) || defined(WIN32)
+  //---------- OS/2+EMX and Win32 ----------
   char *p;
 
   if ((p = strrchr(fileName, '/')))
@@ -191,6 +295,22 @@ GString *grabPath(char *fileName) {
     return new GString(fileName, p - fileName);
   if ((p = strrchr(fileName, ':')))
     return new GString(fileName, p + 1 - fileName);
+  return new GString();
+
+#elif defined(ACORN)
+  //---------- RISCOS ----------
+  char *p;
+
+  if ((p = strrchr(fileName, '.')))
+    return new GString(fileName, p - fileName);
+  return new GString();
+
+#elif defined(MACOS)
+  //---------- MacOS ----------
+  char *p;
+
+  if ((p = strrchr(fileName, ':')))
+    return new GString(fileName, p - fileName);
   return new GString();
 
 #else
@@ -209,9 +329,17 @@ GBool isAbsolutePath(char *path) {
   return strchr(path, ':') ||
 	 (path[0] == '[' && path[1] != '.' && path[1] != '-');
 
-#elif defined(__EMX__)
-  //---------- OS/2+EMX ----------
+#elif defined(__EMX__) || defined(WIN32)
+  //---------- OS/2+EMX and Win32 ----------
   return path[0] == '/' || path[0] == '\\' || path[1] == ':';
+
+#elif defined(ACORN)
+  //---------- RISCOS ----------
+  return path[0] == '$';
+
+#elif defined(MACOS)
+  //---------- MacOS ----------
+  return path[0] != ':';
 
 #else
   //---------- Unix ----------
@@ -226,17 +354,33 @@ GString *makePathAbsolute(GString *path) {
 
   if (!isAbsolutePath(path->getCString())) {
     if (getcwd(buf, sizeof(buf))) {
-      if (path->getChar(0) == '[') {
-	if (path->getChar(1) != '.')
-	  path->insert(0, '.');
-	path->insert(0, buf);
-      } else {
-	path->insert(0, '[');
-	path->insert(1, ']');
-	path->insert(1, buf);
-      }
+      path->insert(0, buf);
     }
   }
+  return path;
+
+#elif defined(WIN32)
+  //---------- Win32 ----------
+  char buf[_MAX_PATH];
+  char *fp;
+
+  buf[0] = '\0';
+  if (!GetFullPathName(path->getCString(), _MAX_PATH, buf, &fp)) {
+    path->clear();
+    return path;
+  }
+  path->clear();
+  path->append(buf);
+  return path;
+
+#elif defined(ACORN)
+  //---------- RISCOS ----------
+  path->insert(0, '@');
+  return path;
+
+#elif defined(MACOS)
+  //---------- MacOS ----------
+  path->del(0, 1);
   return path;
 
 #else
@@ -275,7 +419,9 @@ GString *makePathAbsolute(GString *path) {
     }
   } else if (!isAbsolutePath(path->getCString())) {
     if (getcwd(buf, sizeof(buf))) {
+#ifndef __EMX__
       path->insert(0, '/');
+#endif
       path->insert(0, buf);
     }
   }
@@ -283,30 +429,164 @@ GString *makePathAbsolute(GString *path) {
 #endif
 }
 
+time_t getModTime(char *fileName) {
+#ifdef WIN32
+  //~ should implement this, but it's (currently) only used in xpdf
+  return 0;
+#else
+  struct stat statBuf;
+
+  if (stat(fileName, &statBuf)) {
+    return 0;
+  }
+  return statBuf.st_mtime;
+#endif
+}
+
+GBool openTempFile(GString **name, FILE **f, char *mode, char *ext) {
+#if defined(WIN32)
+  //---------- Win32 ----------
+  char *s;
+  char buf[_MAX_PATH];
+  char *fp;
+
+  if (!(s = _tempnam(getenv("TEMP"), NULL))) {
+    return gFalse;
+  }
+  *name = new GString(s);
+  free(s);
+  if (ext) {
+    (*name)->append(ext);
+  }
+  if (!(*f = fopen((*name)->getCString(), mode))) {
+    delete (*name);
+    return gFalse;
+  }
+  return gTrue;
+#elif defined(VMS) || defined(__EMX__) || defined(ACORN) || defined(MACOS)
+  //---------- non-Unix ----------
+  char *s;
+
+  // There is a security hole here: an attacker can create a symlink
+  // with this file name after the tmpnam call and before the fopen
+  // call.  I will happily accept fixes to this function for non-Unix
+  // OSs.
+  if (!(s = tmpnam(NULL))) {
+    return gFalse;
+  }
+  *name = new GString(s);
+  if (ext) {
+    (*name)->append(ext);
+  }
+  if (!(*f = fopen((*name)->getCString(), mode))) {
+    delete (*name);
+    return gFalse;
+  }
+  return gTrue;
+#else
+  //---------- Unix ----------
+  char *s, *p;
+  int fd;
+
+  if (ext) {
+    if (!(s = tmpnam(NULL))) {
+      return gFalse;
+    }
+    *name = new GString(s);
+    s = (*name)->getCString();
+    if ((p = strrchr(s, '.'))) {
+      (*name)->del(p - s, (*name)->getLength() - (p - s));
+    }
+    (*name)->append(ext);
+    fd = open((*name)->getCString(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+  } else {
+#if HAVE_MKSTEMP
+    if ((s = getenv("TMPDIR"))) {
+      *name = new GString(s);
+    } else {
+      *name = new GString("/tmp");
+    }
+    (*name)->append("/XXXXXX");
+    fd = mkstemp((*name)->getCString());
+#else // HAVE_MKSTEMP
+    if (!(s = tmpnam(NULL))) {
+      return gFalse;
+    }
+    *name = new GString(s);
+    fd = open((*name)->getCString(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+#endif // HAVE_MKSTEMP
+  }
+  if (fd < 0 || !(*f = fdopen(fd, mode))) {
+    delete *name;
+    return gFalse;
+  }
+  return gTrue;
+#endif
+}
+
+char *getLine(char *buf, int size, FILE *f) {
+  int c, i;
+
+  i = 0;
+  while (i < size - 1) {
+    if ((c = fgetc(f)) == EOF) {
+      break;
+    }
+    buf[i++] = (char)c;
+    if (c == '\x0a') {
+      break;
+    }
+    if (c == '\x0d') {
+      c = fgetc(f);
+      if (c == '\x0a' && i < size - 1) {
+	buf[i++] = (char)c;
+      } else if (c != EOF) {
+	ungetc(c, f);
+      }
+      break;
+    }
+  }
+  buf[i] = '\0';
+  if (i == 0) {
+    return NULL;
+  }
+  return buf;
+}
+
 //------------------------------------------------------------------------
 // GDir and GDirEntry
 //------------------------------------------------------------------------
 
-GDirEntry::GDirEntry(char *dirPath, char *name1, GBool doStat) {
+GDirEntry::GDirEntry(char *dirPath, char *nameA, GBool doStat) {
 #ifdef VMS
   char *p;
+#elif defined(WIN32)
+  int fa;
+  GString *s;
+#elif defined(ACORN)
 #else
   struct stat st;
   GString *s;
 #endif
 
-  name = new GString(name1);
+  name = new GString(nameA);
   dir = gFalse;
   if (doStat) {
 #ifdef VMS
-    if (!strcmp(name1, "-") ||
-	((p = strrchr(name1, '.')) && !strncmp(p, ".DIR;", 5)))
+    if (!strcmp(nameA, "-") ||
+	((p = strrchr(nameA, '.')) && !strncmp(p, ".DIR;", 5)))
       dir = gTrue;
+#elif defined(ACORN)
 #else
     s = new GString(dirPath);
-    appendToPath(s, name1);
+    appendToPath(s, nameA);
+#ifdef WIN32
+    fa = GetFileAttributes(s->getCString());
+    dir = (fa != 0xFFFFFFFF && (fa & FILE_ATTRIBUTE_DIRECTORY));
+#else
     if (stat(s->getCString(), &st) == 0)
       dir = S_ISDIR(st.st_mode);
+#endif
     delete s;
 #endif
   }
@@ -316,19 +596,39 @@ GDirEntry::~GDirEntry() {
   delete name;
 }
 
-GDir::GDir(char *name, GBool doStat1) {
+GDir::GDir(char *name, GBool doStatA) {
   path = new GString(name);
-  doStat = doStat1;
+  doStat = doStatA;
+#if defined(WIN32)
+  GString *tmp;
+
+  tmp = path->copy();
+  tmp->append("/*.*");
+  hnd = FindFirstFile(tmp->getCString(), &ffd);
+  delete tmp;
+#elif defined(ACORN)
+#elif defined(MACOS)
+#else
   dir = opendir(name);
 #ifdef VMS
   needParent = strchr(name, '[') != NULL;
+#endif
 #endif
 }
 
 GDir::~GDir() {
   delete path;
+#if defined(WIN32)
+  if (hnd) {
+    FindClose(hnd);
+    hnd = NULL;
+  }
+#elif defined(ACORN)
+#elif defined(MACOS)
+#else
   if (dir)
     closedir(dir);
+#endif
 }
 
 GDirEntry *GDir::getNextEntry() {
@@ -336,6 +636,15 @@ GDirEntry *GDir::getNextEntry() {
   GDirEntry *e;
 
   e = NULL;
+#if defined(WIN32)
+  e = new GDirEntry(path->getCString(), ffd.cFileName, doStat);
+  if (hnd  && !FindNextFile(hnd, &ffd)) {
+    FindClose(hnd);
+    hnd = NULL;
+  }
+#elif defined(ACORN)
+#elif defined(MACOS)
+#else
   if (dir) {
 #ifdef VMS
     if (needParent) {
@@ -352,13 +661,26 @@ GDirEntry *GDir::getNextEntry() {
     if (ent)
       e = new GDirEntry(path->getCString(), ent->d_name, doStat);
   }
+#endif
   return e;
 }
 
 void GDir::rewind() {
+#ifdef WIN32
+  GString *tmp;
+
+  if (hnd)
+    FindClose(hnd);
+  tmp = path->copy();
+  tmp->append("/*.*");
+  hnd = FindFirstFile(tmp->getCString(), &ffd);
+#elif defined(ACORN)
+#elif defined(MACOS)
+#else
   if (dir)
     rewinddir(dir);
 #ifdef VMS
   needParent = strchr(path->getCString(), '[') != NULL;
+#endif
 #endif
 }

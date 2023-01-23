@@ -24,11 +24,14 @@ public:
   GString();
 
   // Create a string from a C string.
-  GString(char *s1);
+  GString(const char *sA);
 
-  // Create a string from <length1> chars at <s1>.  This string
+  // Create a string from <lengthA> chars at <sA>.  This string
   // can contain null characters.
-  GString (char *s1, int length1);
+  GString(const char *sA, int lengthA);
+
+  // Create a string from <lengthA> chars at <idx> in <str>.
+  GString(GString *str, int idx, int lengthA);
 
   // Copy a string.
   GString(GString *str);
@@ -36,6 +39,9 @@ public:
 
   // Concatenate two strings.
   GString(GString *str1, GString *str2);
+
+  // Convert an integer to a string.
+  static GString *fromInt(int x);
 
   // Destructor.
   ~GString();
@@ -58,14 +64,14 @@ public:
   // Append a character or string.
   GString *append(char c);
   GString *append(GString *str);
-  GString *append(char *str);
-  GString *append(char *str, int length1);
+  GString *append(const char *str);
+  GString *append(const char *str, int lengthA);
 
   // Insert a character or string.
   GString *insert(int i, char c);
   GString *insert(int i, GString *str);
-  GString *insert(int i, char *str);
-  GString *insert(int i, char *str, int length1);
+  GString *insert(int i, const char *str);
+  GString *insert(int i, const char *str, int lengthA);
 
   // Delete a character or range of characters.
   GString *del(int i, int n = 1);
@@ -78,8 +84,8 @@ public:
   // These functions assume the strings do not contain null characters.
   int cmp(GString *str) { return strcmp(s, str->getCString()); }
   int cmpN(GString *str, int n) { return strncmp(s, str->getCString(), n); }
-  int cmp(char *s1) { return strcmp(s, s1); }
-  int cmpN(char *s1, int n) { return strncmp(s, s1, n); }
+  int cmp(const char *sA) { return strcmp(s, sA); }
+  int cmpN(const char *sA, int n) { return strncmp(s, sA, n); }
 
 private:
 

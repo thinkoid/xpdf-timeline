@@ -8,16 +8,25 @@
 //
 //========================================================================
 
-#include <gmem.h>
+#include <aconf.h>
+#include "gmem.h"
 
 #ifdef DEBUG_MEM
-void *operator new(long size) {
+
+void *operator new(size_t size) {
   return gmalloc((int)size);
 }
-#endif
 
-#ifdef DEBUG_MEM
+void *operator new[](size_t size) {
+  return gmalloc((int)size);
+}
+
 void operator delete(void *p) {
   gfree(p);
 }
+
+void operator delete[](void *p) {
+  gfree(p);
+}
+
 #endif

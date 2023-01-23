@@ -11,16 +11,42 @@
 #ifndef GFILE_H
 #define GFILE_H
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <unistd.h>
-#include <sys/types.h>
-#ifdef VMS
-#include "vms_dirent.h"
+#if defined(WIN32)
+#  include <sys/stat.h>
+#  ifdef FPTEX
+#    include <win32lib.h>
+#  else
+#    include <windows.h>
+#  endif
+#elif defined(ACORN)
+#elif defined(MACOS)
+#  include <ctime.h>
 #else
-#include <dirent.h>
+#  include <unistd.h>
+#  include <sys/types.h>
+#  ifdef VMS
+#    include "vms_dirent.h"
+#  elif HAVE_DIRENT_H
+#    include <dirent.h>
+#    define NAMLEN(d) strlen((d)->d_name)
+#  else
+#    define dirent direct
+#    define NAMLEN(d) (d)->d_namlen
+#    if HAVE_SYS_NDIR_H
+#      include <sys/ndir.h>
+#    endif
+#    if HAVE_SYS_DIR_H
+#      include <sys/dir.h>
+#    endif
+#    if HAVE_NDIR_H
+#      include <ndir.h>
+#    endif
+#  endif
 #endif
-#include <gtypes.h>
+#include "gtypes.h"
 
 class GString;
 
@@ -45,7 +71,23 @@ extern GBool isAbsolutePath(char *path);
 
 // Make this path absolute by prepending current directory (if path is
 // relative) or prepending user's directory (if path starts with '~').
-GString *makePathAbsolute(GString *path);
+extern GString *makePathAbsolute(GString *path);
+
+// Get the modification time for <fileName>.  Returns 0 if there is an
+// error.
+extern time_t getModTime(char *fileName);
+
+// Create a temporary file and open it for writing.  If <ext> is not
+// NULL, it will be used as the file name extension.  Returns both the
+// name and the file pointer.  For security reasons, all writing
+// should be done to the returned file pointer; the file may be
+// reopened later for reading, but not for writing.  The <mode> string
+// should be "w" or "wb".  Returns true on success.
+extern GBool openTempFile(GString **name, FILE **f, char *mode, char *ext);
+
+// Just like fgets, but handles Unix, Mac, and/or DOS end-of-line
+// conventions.
+extern char *getLine(char *buf, int size, FILE *f);
 
 //------------------------------------------------------------------------
 // GDir and GDirEntry
@@ -54,7 +96,7 @@ GString *makePathAbsolute(GString *path);
 class GDirEntry {
 public:
 
-  GDirEntry(char *dirPath, char *name1, GBool doStat);
+  GDirEntry(char *dirPath, char *nameA, GBool doStat);
   ~GDirEntry();
   GString *getName() { return name; }
   GBool isDir() { return dir; }
@@ -68,7 +110,7 @@ private:
 class GDir {
 public:
 
-  GDir(char *name, GBool doStat1 = gTrue);
+  GDir(char *name, GBool doStatA = gTrue);
   ~GDir();
   GDirEntry *getNextEntry();
   void rewind();
@@ -77,10 +119,17 @@ private:
 
   GString *path;		// directory path
   GBool doStat;			// call stat() for each entry?
+#if defined(WIN32)
+  WIN32_FIND_DATA ffd;
+  HANDLE hnd;
+#elif defined(ACORN)
+#elif defined(MACOS)
+#else
+  DIR *dir;			// the DIR structure from opendir()
 #ifdef VMS
   GBool needParent;		// need to return an entry for [-]
 #endif
-  DIR *dir;			// the DIR structure from opendir()
+#endif
 };
 
 #endif

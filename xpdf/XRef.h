@@ -13,12 +13,11 @@
 #pragma interface
 #endif
 
-#include <stdio.h>
-#include <gtypes.h>
+#include "gtypes.h"
 #include "Object.h"
 
 class Dict;
-class FileStream;
+class Stream;
 
 //------------------------------------------------------------------------
 // XRef
@@ -34,7 +33,7 @@ class XRef {
 public:
 
   // Constructor.  Read xref table from stream.
-  XRef(FileStream *str);
+  XRef(BaseStream *strA, GString *ownerPassword, GString *userPassword);
 
   // Destructor.
   ~XRef();
@@ -42,9 +41,18 @@ public:
   // Is xref table valid?
   GBool isOk() { return ok; }
 
-  // Are printing and copying allowed?  If not, print an error message.
-  GBool okToPrint();
-  GBool okToCopy();
+  // Is the file encrypted?
+#ifndef NO_DECRYPTION
+  GBool isEncrypted() { return encrypted; }
+#else
+  GBool isEncrypted() { return gFalse; }
+#endif
+
+  // Check various permissions.
+  GBool okToPrint(GBool ignoreOwnerPW = gFalse);
+  GBool okToChange(GBool ignoreOwnerPW = gFalse);
+  GBool okToCopy(GBool ignoreOwnerPW = gFalse);
+  GBool okToAddNotes(GBool ignoreOwnerPW = gFalse);
 
   // Get catalog object.
   Object *getCatalog(Object *obj) { return fetch(rootNum, rootGen, obj); }
@@ -52,9 +60,27 @@ public:
   // Fetch an indirect reference.
   Object *fetch(int num, int gen, Object *obj);
 
+  // Return the document's Info dictionary (if any).
+  Object *getDocInfo(Object *obj);
+  Object *getDocInfoNF(Object *obj);
+
+  // Return the number of objects in the xref table.
+  int getNumObjects() { return size; }
+
+  // Return the offset of the last xref table.
+  int getLastXRefPos() { return lastXRefPos; }
+
+  // Return the catalog object reference.
+  int getRootNum() { return rootNum; }
+  int getRootGen() { return rootGen; }
+
+  // Get end position for a stream in a damaged file.
+  // Returns -1 if unknown or file is not damaged.
+  int getStreamEnd(int streamStart);
+
 private:
 
-  FILE *file;			// input file
+  BaseStream *str;		// input stream
   int start;			// offset in file (to allow for garbage
 				//   at beginning of file)
   XRefEntry *entries;		// xref entries
@@ -62,17 +88,24 @@ private:
   int rootNum, rootGen;		// catalog dict
   GBool ok;			// true if xref table is valid
   Object trailerDict;		// trailer dictionary
+  int lastXRefPos;		// offset of last xref table
+  int *streamEnds;		// 'endstream' positions - only used in
+				//   damaged files
+  int streamEndsLen;		// number of valid entries in streamEnds
+#ifndef NO_DECRYPTION
+  GBool encrypted;		// true if file is encrypted
+  int encVersion;		// encryption algorithm
+  int encRevision;		// security handler revision
+  int keyLength;		// length of key, in bytes
+  int permFlags;		// permission bits
+  Guchar fileKey[16];		// file decryption key
+  GBool ownerPasswordOk;	// true if owner password is correct
+#endif
 
-  int readTrailer(FileStream *str);
-  GBool readXRef(FileStream *str, int *pos);
-  GBool constructXRef(FileStream *str);
-  GBool checkEncrypted();
+  int readTrailer();
+  GBool readXRef(int *pos);
+  GBool constructXRef();
+  GBool checkEncrypted(GString *ownerPassword, GString *userPassword);
 };
-
-//------------------------------------------------------------------------
-// The global xref table
-//------------------------------------------------------------------------
-
-extern XRef *xref;
 
 #endif

@@ -13,17 +13,23 @@
 #pragma interface
 #endif
 
-#include <gtypes.h>
+#include "gtypes.h"
 
 class GString;
+class XRef;
 class Array;
 class Stream;
 class Parser;
 class Dict;
 class OutputDev;
 class GfxFontDict;
+class GfxFont;
+class GfxPattern;
+class GfxShading;
+class GfxAxialShading;
 class GfxState;
 class Gfx;
+struct PDFRectangle;
 
 //------------------------------------------------------------------------
 // Gfx
@@ -42,7 +48,8 @@ enum TchkType {
   tchkString,			// string
   tchkName,			// name
   tchkArray,			// array
-  tchkVarNum,			// variable number of numbers
+  tchkProps,			// properties (dictionary or name)
+  tchkSCN,			// scn/SCN args (number of name)
   tchkNone			// used to avoid empty initializer lists
 };
 
@@ -55,37 +62,69 @@ struct Operator {
   void (Gfx::*func)(Object args[], int numArgs);
 };
 
+class GfxResources {
+public:
+
+  GfxResources(XRef *xref, Dict *resDict, GfxResources *nextA);
+  ~GfxResources();
+
+  GfxFont *lookupFont(char *name);
+  GBool lookupXObject(char *name, Object *obj);
+  GBool lookupXObjectNF(char *name, Object *obj);
+  void lookupColorSpace(char *name, Object *obj);
+  GfxPattern *lookupPattern(char *name);
+  GfxShading *lookupShading(char *name);
+  GBool lookupGState(char *name, Object *obj);
+
+  GfxResources *getNext() { return next; }
+
+private:
+
+  GfxFontDict *fonts;
+  Object xObjDict;
+  Object colorSpaceDict;
+  Object patternDict;
+  Object shadingDict;
+  Object gStateDict;
+  GfxResources *next;
+};
+
 class Gfx {
 public:
 
   // Constructor for regular output.
-  Gfx(OutputDev *out1, int pageNum, Dict *resDict,
-      int dpi, int x1, int y1, int x2, int y2, GBool crop,
-      int cropX1, int cropY1, int cropX2, int cropY2, int rotate);
+  Gfx(XRef *xrefA, OutputDev *outA, int pageNum, Dict *resDict, double dpi,
+      PDFRectangle *box, GBool crop, PDFRectangle *cropBox, int rotate,
+      GBool printCommandsA);
 
   // Destructor.
   ~Gfx();
 
   // Interpret a stream or array of streams.
-  void display(Object *obj);
+  void display(Object *obj, GBool topLevel = gTrue);
+
+  void doWidgetForm(Object *str, double xMin, double yMin,
+		    double xMax, double yMax);
 
 private:
 
+  XRef *xref;			// the xref table for this PDF file
   OutputDev *out;		// output device
-  GfxFontDict *fonts;		// font dictionary
-  Object xObjDict;		// XObject dictionary
-  Object colorSpaceDict;	// color space dictionary
+  GBool printCommands;		// print the drawing commands (for debugging)
+  GfxResources *res;		// resource stack
 
   GfxState *state;		// current graphics state
   GBool fontChanged;		// set if font or text matrix has changed
   GfxClipType clip;		// do a clip?
   int ignoreUndef;		// current BX/EX nesting level
+  double baseMatrix[6];		// default matrix for most recent
+				//   page/form/pattern
 
   Parser *parser;		// parser for page content stream(s)
 
   static Operator opTab[];	// table of operators
 
-  void go();
+  void go(GBool topLevel);
   void execOp(Object *cmd, Object args[], int numArgs);
   Operator *findOp(char *name);
   GBool checkArg(Object *arg, TchkType type);
@@ -102,6 +141,7 @@ private:
   void opSetMiterLimit(Object args[], int numArgs);
   void opSetLineWidth(Object args[], int numArgs);
   void opSetExtGState(Object args[], int numArgs);
+  void opSetRenderingIntent(Object args[], int numArgs);
 
   // color operators
   void opSetFillGray(Object args[], int numArgs);
@@ -114,6 +154,8 @@ private:
   void opSetStrokeColorSpace(Object args[], int numArgs);
   void opSetFillColor(Object args[], int numArgs);
   void opSetStrokeColor(Object args[], int numArgs);
+  void opSetFillColorN(Object args[], int numArgs);
+  void opSetStrokeColorN(Object args[], int numArgs);
 
   // path segment operators
   void opMoveTo(Object args[], int numArgs);
@@ -134,6 +176,9 @@ private:
   void opCloseFillStroke(Object args[], int numArgs);
   void opEOFillStroke(Object args[], int numArgs);
   void opCloseEOFillStroke(Object args[], int numArgs);
+  void doPatternFill(GBool eoFill);
+  void opShFill(Object args[], int numArgs);
+  void doAxialShFill(GfxAxialShading *shading);
   void doEndPath();
 
   // path clipping operators
@@ -168,8 +213,9 @@ private:
 
   // XObject operators
   void opXObject(Object args[], int numArgs);
-  void doImage(Stream *str, GBool inlineImg);
+  void doImage(Object *ref, Stream *str, GBool inlineImg);
   void doForm(Object *str);
+  void doForm1(Object *str, Dict *resDict, double *matrix, double *bbox);
 
   // in-line image operators
   void opBeginImage(Object args[], int numArgs);
@@ -184,6 +230,11 @@ private:
   // compatibility operators
   void opBeginIgnoreUndef(Object args[], int numArgs);
   void opEndIgnoreUndef(Object args[], int numArgs);
+
+  // marked content operators
+  void opBeginMarkedContent(Object args[], int numArgs);
+  void opEndMarkedContent(Object args[], int numArgs);
+  void opMarkPoint(Object args[], int numArgs);
 };
 
 #endif

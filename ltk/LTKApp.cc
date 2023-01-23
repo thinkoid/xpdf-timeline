@@ -10,27 +10,55 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stddef.h>
 #include <unistd.h>
-#include <sys/types.h>
-#include <sys/time.h>
-#ifdef _AIX
+#ifdef HAVE_STRINGS_H
+// needed by AIX for bzero() declaration for FD_ZERO
+#include <strings.h>
+#endif
+#ifdef HAVE_BSTRING_H
+// needed by IRIX for bzero() declaration for FD_ZERO
+#include <bstring.h>
+#endif
+#ifdef HAVE_SYS_SELECT_H
+// needed by some systems for fd_set
 #include <sys/select.h>
+#endif
+#ifdef HAVE_SYS_BSDTYPES_H
+// needed by some systems for fd_set
+#include <sys/bsdtypes.h>
 #endif
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
-#include <gtypes.h>
-#include <LTKApp.h>
-#include <LTKResources.h>
-#include <LTKWindow.h>
-#include <LTKMenu.h>
-#include <LTKMisc.h>
-#include <LTKWidget.h>
+#include "gtypes.h"
+#include "LTKApp.h"
+#include "LTKResources.h"
+#include "LTKWindow.h"
+#include "LTKMenu.h"
+#include "LTKMisc.h"
+#include "LTKWidget.h"
 
-#if defined(VMS) && defined(__DECCXX) && (_VMS_VER < 70000000)
-int gettimeofday (struct timeval *__tp, void *__tzp);
+#ifdef XlibSpecificationRelease
+#if XlibSpecificationRelease < 5
+typedef char *XPointer;
+#endif
+#else
+typedef char *XPointer;
+#endif
+
+#ifdef VMS
+extern "C" int XMultiplexInput(int num_displays,
+			       Display *displays[],
+			       unsigned long ef_mask,
+			       unsigned long timeout,
+			       unsigned long options,
+			       long *retval_pointer);
+#if defined(__DECCXX) && (_VMS_VER < 70000000)
+extern "C" int gettimeofday (struct timeval *__tp, void *__tzp);
+#endif
 #endif
 
 //------------------------------------------------------------------------
@@ -45,14 +73,18 @@ int gettimeofday (struct timeval *__tp, void *__tzp);
 // LTKApp
 //------------------------------------------------------------------------
 
-LTKApp::LTKApp(char *appName1, XrmOptionDescRec *opts,
+LTKApp::LTKApp(char *appNameA, char *appClassA, XrmOptionDescRec *opts,
 	       int *argc, char *argv[]) {
   int numOpts;
   XrmDatabase cmdLineDB;
   GString *displayName;
+  int h;
 
-  appName = new GString(appName1);
+  appName = new GString(appNameA);
+  appClass = new GString(appClassA);
   windows = NULL;
+  for (h = 0; h < ltkWinTabSize; ++h)
+    winTab[h] = NULL;
   grabWin = NULL;
   activeMenu = NULL;
   repeatWidget = NULL;
@@ -64,15 +96,19 @@ LTKApp::LTKApp(char *appName1, XrmOptionDescRec *opts,
   XrmInitialize();
   for (numOpts = 0; opts[numOpts].option; ++numOpts) ;
   ltkGetCmdLineResources(&cmdLineDB, opts, numOpts, appName, argc, argv);
-  displayName = ltkGetStringResource(cmdLineDB, appName, "display", "");
+  displayName = ltkGetStringResource(cmdLineDB, appName, appClass,
+				     "display", "");
   if (!(display = XOpenDisplay(displayName->getCString()))) {
-    ltkError("Cannot connect to X server %s\n", XDisplayName(NULL));
+    ltkError("Cannot connect to X server %s\n",
+	     XDisplayName(displayName->getCString()));
     exit(1);
   }
   delete displayName;
   screenNum = DefaultScreen(display);
-  ltkGetOtherResources(display, cmdLineDB, &resourceDB);
+  ltkGetOtherResources(display, appClass, cmdLineDB, &resourceDB);
+  wmDeleteWinAtom = XInternAtom(display, "WM_DELETE_WINDOW", False);
   pressedBtn = 0;
+  killCbk = NULL;
 }
 
 LTKApp::~LTKApp() {
@@ -85,31 +121,37 @@ LTKApp::~LTKApp() {
   }
   XCloseDisplay(display);
   delete appName;
+  delete appClass;
 }
 
 GString *LTKApp::getStringResource(char *inst, char *def) {
-  return ltkGetStringResource(resourceDB, appName, inst, def);
+  return ltkGetStringResource(resourceDB, appName, appClass, inst, def);
 }
 
 int LTKApp::getIntResource(char *inst, int def) {
-  return ltkGetIntResource(resourceDB, appName, inst, def);
+  return ltkGetIntResource(resourceDB, appName, appClass, inst, def);
+}
+
+GBool LTKApp::getBoolResource(char *inst, GBool def) {
+  return ltkGetBoolResource(resourceDB, appName, appClass, inst, def);
 }
 
 unsigned long LTKApp::getColorResource(char *inst,
 				       char *def1, unsigned long def2,
 				       XColor *xcol) {
-  return ltkGetColorResource(resourceDB, appName, inst,
+  return ltkGetColorResource(resourceDB, appName, appClass, inst,
 			     display, screenNum, def1, def2, xcol);
 }
 
-XFontStruct *LTKApp::getFontResource(char *inst,  char *def) {
-  return ltkGetFontResouce(resourceDB, appName, inst, display, screenNum, def);
+XFontStruct *LTKApp::getFontResource(char *inst, char *def) {
+  return ltkGetFontResouce(resourceDB, appName, appClass, inst,
+			   display, screenNum, def);
 }
 
 void LTKApp::getGeometryResource(char *inst, int *x, int *y,
 				 Guint *width, Guint *height) {
-  ltkGetGeometryResource(resourceDB, appName, inst, display, screenNum,
-			 x, y, width, height);
+  ltkGetGeometryResource(resourceDB, appName, appClass, inst,
+			 display, screenNum, x, y, width, height);
 }
 
 LTKWindow *LTKApp::addWindow(LTKWindow *w) {
@@ -120,56 +162,86 @@ LTKWindow *LTKApp::addWindow(LTKWindow *w) {
 
 LTKWindow *LTKApp::delWindow(LTKWindow *w) {
   LTKWindow *w1, *w2;
+  int h;
+  LTKWinHash *p1, *p2, *p3;
 
   for (w1 = NULL, w2 = windows; w2 && w2 != w; w1 = w2, w2 = w2->getNext()) ;
   if (w2 == w) {
+
+    // remove window from window list
     if (w1)
       w1->setNext(w2->getNext());
     else
       windows = w2->getNext();
     w2->setNext(NULL);
+
+    // remove window and widgets from hash table
+    for (h = 0; h < ltkWinTabSize; ++h) {
+      p1 = NULL;
+      p2 = winTab[h];
+      while (p2) {
+	if (p2->win == w) {
+	  p3 = p2;
+	  if (p1)
+	    p2 = p1->next = p2->next;
+	  else
+	    p2 = winTab[h] = p2->next;
+	  delete p3;
+	} else {
+	  p1 = p2;
+	  p2 = p2->next;
+	}
+      }
+    }
+
     return w2;
   }
   return NULL;
 }
 
-LTKWindow *LTKApp::findWindow(Window xwin, LTKWidget **widget) {
-  LTKWindow *w;
-  Window root;
-  Window xparent;
-  Window *children;
-  unsigned int numChildren;
+void LTKApp::registerXWindow(Window xwin, LTKWindow *win, LTKWidget *widget) {
+  int h;
+  LTKWinHash *p;
 
-  root = None;
-  xparent = None;
-  children = NULL;
-  numChildren = 0;
-  XQueryTree(display, xwin, &root, &xparent, &children, &numChildren);
-  if (numChildren > 0)
-    XFree((void *)children);
-  *widget = NULL;
-  for (w = windows; w; w = w->getNext()) {
-    if (w->getXWindow() == xwin)
-      break;
-    if (w->getXWindow() == xparent) {
-      *widget = w->findWidget(xwin);
-      break;
-    }
-  }
-  return w;
+  h = (int)xwin % ltkWinTabSize;
+  p = new LTKWinHash;
+  p->xwin = xwin;
+  p->win = win;
+  p->widget = widget;
+  p->next = winTab[h];
+  winTab[h] = p;
 }
 
-void LTKApp::setRepeatEvent(LTKWidget *repeatWidget1, int repeatDelay1,
-			    int repeatPeriod1) {
-  repeatWidget = repeatWidget1;
-  repeatDelay = repeatDelay1;
-  repeatPeriod = repeatPeriod1;
+LTKWindow *LTKApp::findWindow(Window xwin, LTKWidget **widget) {
+  int h;
+  LTKWinHash *p;
+
+  h = (int)xwin % ltkWinTabSize;
+  for (p = winTab[h]; p; p = p->next) {
+    if (p->xwin == xwin) {
+      *widget = p->widget;
+      return p->win;
+    }
+  }
+  *widget = NULL;
+  return NULL;
+}
+
+void LTKApp::setRepeatEvent(LTKWidget *repeatWidgetA, int repeatDelayA,
+			    int repeatPeriodA) {
+  repeatWidget = repeatWidgetA;
+  repeatDelay = repeatDelayA;
+  repeatPeriod = repeatPeriodA;
   firstRepeat = gTrue;
   gettimeofday(&lastRepeat, NULL);
 }
 
 void LTKApp::doEvent(GBool wait) {
+#ifdef VMS
+  long delay, retval;
+#else
   fd_set readFDs, writeFDs, exceptFDs;
+#endif
   struct timeval curTime, timeout;
   int timeout1;
   XEvent event;
@@ -177,7 +249,6 @@ void LTKApp::doEvent(GBool wait) {
   Window pointerRoot, pointerChild;
   LTKWindow *win;
   LTKWidget *widget;
-  LTKMenu *menu;
   KeySym key;
   GString *str;
   char buf[20];
@@ -193,18 +264,24 @@ void LTKApp::doEvent(GBool wait) {
   while (XPending(display) == 0) {
     if (!wait)
       return;
+#ifndef VMS
     FD_ZERO(&readFDs);
     FD_ZERO(&writeFDs);
     FD_ZERO(&exceptFDs);
     n = ConnectionNumber(display);
     FD_SET(n, &readFDs);
+#endif
     if (!repeatWidget) {
-#ifdef __hpux
+#ifdef VMS
+      n = XMultiplexInput(1, &display, 0, 0, 0, &retval);
+#else // VMS
+#ifdef SELECT_TAKES_INT
       n = select(n+1, (int *)&readFDs, (int *)&writeFDs, (int *)&exceptFDs,
 		 NULL);
 #else
       n = select(n+1, &readFDs, &writeFDs, &exceptFDs, NULL);
 #endif
+#endif // VMS
     } else {
       gettimeofday(&curTime, NULL);
       timeout.tv_sec = curTime.tv_sec - lastRepeat.tv_sec;
@@ -220,12 +297,18 @@ void LTKApp::doEvent(GBool wait) {
       else
 	timeout.tv_usec = timeout1 - timeout.tv_usec;
       timeout.tv_sec = 0;
-#ifdef __hpux
+#ifdef VMS
+      if ((delay = timeout.tv_usec / 1000) == 0)
+	delay = 1;
+      n = XMultiplexInput(1, &display, 0, delay, 0, &retval);
+#else // VMS
+#ifdef SELECT_TAKES_INT
       n = select(n+1, (int *)&readFDs, (int *)&writeFDs, (int *)&exceptFDs,
 		 &timeout);
 #else
       n = select(n+1, &readFDs, &writeFDs, &exceptFDs, &timeout);
 #endif
+#endif // VMS
     }
     if (n == 0 && repeatWidget) {
       repeatWidget->repeatEvent();
@@ -237,10 +320,6 @@ void LTKApp::doEvent(GBool wait) {
 
   XNextEvent(display, &event);
   win = findWindow(event.xany.window, &widget);
-  if (activeMenu && event.xany.window == activeMenu->getXWindow())
-    menu = activeMenu;
-  else
-    menu = NULL;
   switch (event.type) {
   case Expose:
     // redraw the window or widget, ignoring all but the last
@@ -250,8 +329,8 @@ void LTKApp::doEvent(GBool wait) {
 	widget->redraw();
       else if (win)
 	win->redrawBackground();
-      else if (menu)
-	menu->redraw();
+      else if (activeMenu)
+	activeMenu->redraw();
     }
     break;
   case GraphicsExpose:
@@ -262,8 +341,8 @@ void LTKApp::doEvent(GBool wait) {
 	widget->redraw();
       else if (win)
 	win->redrawBackground();
-      else if (menu)
-	menu->redraw();
+      else if (activeMenu)
+	activeMenu->redraw();
     }
     break;
   case ConfigureNotify:
@@ -284,9 +363,9 @@ void LTKApp::doEvent(GBool wait) {
     dblClick = event.xbutton.time - buttonPressTime < ltkDoubleClickTime;
     buttonPressTime = event.xbutton.time;
     pressedBtn = event.xbutton.button - Button1 + 1;
-    if (menu) {
-      menu->buttonPress(event.xbutton.x, event.xbutton.y,
-			pressedBtn, dblClick);
+    if (activeMenu) {
+      activeMenu->buttonPress(event.xbutton.x, event.xbutton.y,
+			      pressedBtn, dblClick);
     } else if (win && !(grabWin && win != grabWin)) {
       if (event.xbutton.button == Button3) {
 	win->postMenu(event.xbutton.x_root, event.xbutton.y_root);
@@ -307,9 +386,9 @@ void LTKApp::doEvent(GBool wait) {
   case ButtonRelease:
     pressedBtn = 0;
     click = event.xbutton.time - buttonPressTime < ltkSingleClickTime;
-    if (menu) {
-      menu->buttonRelease(event.xbutton.x, event.xbutton.y,
-			  event.xbutton.button - Button1 + 1, click);
+    if (activeMenu) {
+      activeMenu->buttonRelease(event.xbutton.x, event.xbutton.y,
+				event.xbutton.button - Button1 + 1, click);
     } else if (win && !(grabWin && win != grabWin) && widget) {
       widget->buttonRelease(event.xbutton.x, event.xbutton.y,
 			    event.xbutton.button - Button1 + 1, click);
@@ -320,15 +399,15 @@ void LTKApp::doEvent(GBool wait) {
     // to call XQueryPointer
     XQueryPointer(display, event.xany.window, &pointerRoot, &pointerChild,
 		  &rx, &ry, &x, &y, &mask);
-    if (menu) {
-      menu->mouseMove(x, y, pressedBtn);
+    if (activeMenu) {
+      activeMenu->mouseMove(x, y, pressedBtn);
     } else if (win && !(grabWin && win != grabWin) && widget) {
       widget->mouseMove(x, y, pressedBtn);
     }
     break;
   case KeyPress:
     if (win && !(grabWin && win != grabWin)) {
-      n = XLookupString((XKeyEvent *)&event, buf, sizeof(buf)-1,
+      n = XLookupString(&event.xkey, buf, sizeof(buf)-1,
 			&key, NULL);
       buf[n] = '\0';
       win->keyPress(key, event.xkey.state, buf, n);
@@ -371,9 +450,9 @@ void LTKApp::doEvent(GBool wait) {
 			       &typeRet, &formatRet, &length, &left,
 			       &bufPtr) != Success)
 	  break;
-	str->append((char *)bufPtr, length);
-	XFree(bufPtr);
-	i += length;
+	str->append((char *)bufPtr, (int)length);
+	XFree((XPointer)bufPtr);
+	i += (int)length;
       } while (left > 0);
       win->getPasteWidget()->paste(str);
       delete str;
@@ -382,6 +461,14 @@ void LTKApp::doEvent(GBool wait) {
   case PropertyNotify:
     if (win && !(grabWin && win != grabWin))
       win->propChange(event.xproperty.atom);
+    break;
+  case ClientMessage:
+    if ((Atom)event.xclient.data.l[0] == wmDeleteWinAtom && win) {
+      if (killCbk)
+	(*killCbk)(win);
+      else
+	exit(0);
+    }
     break;
   default:
     break;

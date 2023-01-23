@@ -10,6 +10,7 @@
 #pragma implementation
 #endif
 
+#include <aconf.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -18,16 +19,16 @@
 #include <X11/Xutil.h>
 #include <X11/Xatom.h>
 #include <X11/cursorfont.h>
-#ifndef NO_XPM
-#include "X11/xpm.h"
+#ifdef HAVE_X11_XPM_H
+#include <X11/xpm.h>
 #endif
-#include <LTKConfig.h>
-#include <LTKApp.h>
-#include <LTKMenu.h>
-#include <LTKWindow.h>
-#include <LTKWidget.h>
-#include <LTKBox.h>
-#include <LTKBorder.h>
+#include "LTKConfig.h"
+#include "LTKApp.h"
+#include "LTKMenu.h"
+#include "LTKWindow.h"
+#include "LTKWidget.h"
+#include "LTKBox.h"
+#include "LTKBorder.h"
 
 #ifdef XlibSpecificationRelease
 #if XlibSpecificationRelease < 5
@@ -37,19 +38,31 @@ typedef char *XPointer;
 typedef char *XPointer;
 #endif
 
-static Bool isExposeEvent(Display *display, XEvent *e, XPointer win);
+// This is used only to set the no-decorations hint.
+typedef struct {
+  Gulong flags;
+  Gulong functions;
+  Gulong decorations;
+  long input_mode;
+  Gulong status;
+} MotifWmHints;
+#define MWM_HINTS_DECORATIONS (1L << 1)
 
-LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
-		     char **iconData1, char *defaultWidgetName,
-		     LTKBox *box1) {
-  app = app1;
-  dialog = dialog1;
-  title = new GString(title1);
-  iconData = iconData1;
+extern "C" {
+static Bool isExposeEvent(Display *display, XEvent *e, XPointer w);
+}
+
+LTKWindow::LTKWindow(LTKApp *appA, GBool dialogA, char *titleA,
+		     char **iconDataA, char *defaultWidgetName,
+		     LTKBox *boxA) {
+  app = appA;
+  dialog = dialogA;
+  title = new GString(titleA);
+  iconData = iconDataA;
   width = 0;
   height = 0;
   widgets = NULL;
-  box = box1;
+  box = boxA;
   box->setParent(this);
   selection = NULL;
   savedCursor = None;
@@ -58,6 +71,7 @@ LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
   keyCbk = NULL;
   propCbk = NULL;
   layoutCbk = NULL;
+  decorated = gTrue;
   if (defaultWidgetName)
     defaultWidget = findWidget(defaultWidgetName);
   else
@@ -69,6 +83,7 @@ LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
   xwin = None;
   eventMask = ExposureMask | StructureNotifyMask | VisibilityChangeMask |
               ButtonPressMask | ButtonReleaseMask | KeyPressMask;
+  installCmap = gFalse;
   fgGC = bgGC = brightGC = darkGC = xorGC = None;
   fontStruct = NULL;
   next = NULL;
@@ -76,8 +91,6 @@ LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
 }
 
 LTKWindow::~LTKWindow() {
-  XEvent event;
-
   if (xwin) {
     XFreeFont(display, fontStruct);
     XFreeGC(display, fgGC);
@@ -85,10 +98,10 @@ LTKWindow::~LTKWindow() {
     XFreeGC(display, brightGC);
     XFreeGC(display, darkGC);
     XFreeGC(display, xorGC);
+    if (installCmap)
+      XFreeColormap(display, colormap);
     XUnmapWindow(display, xwin);
     XDestroyWindow(display, xwin);
-    XSync(display, False);
-    while (XCheckWindowEvent(display, xwin, 0xffffffff, &event)) ;
   }
   app->setGrabWin(NULL);
   app->delWindow(this);
@@ -121,16 +134,6 @@ LTKWidget *LTKWindow::delWidget(LTKWidget *widget) {
     return w2;
   }
   return NULL;
-}
-
-LTKWidget *LTKWindow::findWidget(Window xwin1) {
-  LTKWidget *widget;
-
-  for (widget = widgets; widget; widget = widget->getNext()) {
-    if (widget->getXWindow() == xwin1)
-      break;
-  }
-  return widget;
 }
 
 LTKWidget *LTKWindow::findWidget(char *name) {
@@ -171,8 +174,9 @@ GBool LTKWindow::checkFills(char **err) {
   return gTrue;
 }
 
-void LTKWindow::layout(int x, int y, int width1, int height1) {
+void LTKWindow::layout(int x, int y, int widthA, int heightA) {
   XColor bgXcol;
+  XColor xcol;
   XGCValues gcValues;
   int minWidth, minHeight;
   int width2, height2;
@@ -181,7 +185,10 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   XWMHints *wmHints;
   XClassHint *classHints;
   XTextProperty windowName, iconName;
+  Atom protocol;
   GBool newWin;
+  Atom motifHintsAtom;
+  MotifWmHints motifHints;
 
   // create window and GC's so widgets can use font info, etc.
   if (xwin == None) {
@@ -195,6 +202,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
     xwin = XCreateSimpleWindow(display, RootWindow(display, screenNum),
 			       (x < 0) ? 0 : x, (y < 0) ? 0 : y, 1, 1, 0,
 			       fgColor, bgColor);
+    app->registerXWindow(xwin, this, NULL);
     XSelectInput(display, xwin, eventMask);
     gcValues.foreground = fgColor;
     gcValues.background = bgColor;
@@ -230,6 +238,17 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
 		      GCForeground | GCBackground | GCLineWidth | GCLineStyle |
 		      GCGraphicsExposures | GCFunction,
 		      &gcValues);
+    colormap = DefaultColormap(display, screenNum);
+    if (installCmap) {
+      // ensure that BlackPixel and WhitePixel are reserved in the
+      // new colormap
+      xcol.red = xcol.green = xcol.blue = 0;
+      XAllocColor(display, colormap, &xcol);
+      xcol.red = xcol.green = xcol.blue = 65535;
+      XAllocColor(display, colormap, &xcol);
+      colormap = XCopyColormapAndFree(display, colormap);
+      XSetWindowColormap(display, xwin, colormap);
+    }
   } else {
     newWin = gFalse;
   }
@@ -239,8 +258,8 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   minWidth = box->getWidth();
   minHeight = box->getHeight();
   if (box->getXFill() > 0 && box->getYFill() > 0) {
-    width2 = (width1 < minWidth) ? minWidth : width1;
-    height2 = (height1 < minHeight) ? minHeight : height1;
+    width2 = (widthA < minWidth) ? minWidth : widthA;
+    height2 = (heightA < minHeight) ? minHeight : heightA;
     box->layout2(0, 0, width2, height2);
   } else {
     box->layout2(0, 0, minWidth, minHeight);
@@ -255,7 +274,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   // finish the layout and create the widget subwindows
   box->layout3();
 
-  // set window properties
+  // set window properties and protocols
   if (newWin) {
     sizeHints = XAllocSizeHints();
     wmHints = XAllocWMHints();
@@ -266,7 +285,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       XStringListToTextProperty(&title1, 1, &iconName);
       sizeHints->flags = PMinSize;
       sizeHints->flags |= (x >= 0 || y >= 0) ? USPosition : PPosition;
-      sizeHints->flags |= (width1 >= 0 || height1 >= 0) ? USSize : PSize;
+      sizeHints->flags |= (widthA >= 0 || heightA >= 0) ? USSize : PSize;
       sizeHints->min_width = minWidth;
       sizeHints->min_height = minHeight;
       if (!(box->getXFill() > 0 && box->getYFill() > 0)) {
@@ -277,7 +296,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       wmHints->input = True;
       wmHints->initial_state = NormalState;
       wmHints->flags = InputHint | StateHint;
-#ifndef NO_XPM
+#ifdef HAVE_X11_XPM_H
       if (iconData) {
 	if (XpmCreatePixmapFromData(display, xwin, iconData,
 				    &wmHints->icon_pixmap, NULL, NULL) ==
@@ -286,9 +305,19 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       }
 #endif
       classHints->res_name = app->getAppName()->getCString();
-      classHints->res_class = app->getAppName()->getCString();
+      classHints->res_class = app->getAppClass()->getCString();
       XSetWMProperties(display, xwin, &windowName, &iconName,
 		       NULL, 0, sizeHints, wmHints, classHints);
+    }
+    protocol = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, xwin, &protocol, 1);
+    if (!decorated) {
+      motifHintsAtom = XInternAtom(display, "_MOTIF_WM_HINTS", False);
+      motifHints.flags = MWM_HINTS_DECORATIONS;
+      motifHints.decorations = False;
+      XChangeProperty(display, xwin, motifHintsAtom, motifHintsAtom,
+		      32, PropModeReplace, (Guchar *)&motifHints,
+		      sizeof(MotifWmHints) / sizeof(long));
     }
   }
 
@@ -297,7 +326,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
     (*layoutCbk)(this);
 }
 
-void LTKWindow::layoutDialog(LTKWindow *overWin1, int width1, int height1) {
+void LTKWindow::layoutDialog(LTKWindow *overWinA, int widthA, int heightA) {
   Window w1, w2, root;
   Window *children;
   Guint numChildren;
@@ -305,10 +334,10 @@ void LTKWindow::layoutDialog(LTKWindow *overWin1, int width1, int height1) {
   Guint w, h, bw, depth;
 
   // save the over-window
-  overWin = overWin1;
+  overWin = overWinA;
 
   // layout the dialog
-  layout(0, 0, width1, height1);
+  layout(0, 0, widthA, heightA);
 
   // find the window manager's outermost parent of <overWin>
   w2 = overWin->getXWindow();
@@ -317,7 +346,7 @@ void LTKWindow::layoutDialog(LTKWindow *overWin1, int width1, int height1) {
     if (!XQueryTree(display, w2, &root, &w2, &children, &numChildren))
       break;
     if (numChildren > 0)
-      XFree((void *)children);
+      XFree((XPointer)children);
   } while (w2 != root);
 
   // center the dialog over <overWin>
@@ -339,14 +368,17 @@ void LTKWindow::map() {
     app->setGrabWin(this);
 }
 
+extern "C" {
 static Bool isExposeEvent(Display *display, XEvent *e, XPointer w) {
   LTKWindow *win;
+  LTKWidget *widget;
   Window xwin;
 
   win = (LTKWindow *)w;
-  xwin = e->xexpose.window;
+  xwin = e->xany.window;
   return e->type == Expose &&
-	 (win->getXWindow() == xwin || win->findWidget(xwin));
+         win->getApp()->findWindow(xwin, &widget) == win;
+}
 }
 
 void LTKWindow::redraw() {
@@ -409,12 +441,12 @@ GC LTKWindow::makeGC(unsigned long color, int lineWidth, int lineStyle) {
   return gc;
 }
 
-void LTKWindow::setTitle(GString *title1) {
+void LTKWindow::setTitle(GString *titleA) {
   XTextProperty windowName, iconName;
   char *title2;
 
   delete title;
-  title = title1;
+  title = titleA;
   title2 = title->getCString();
   if (xwin != None) {
     XStringListToTextProperty(&title2, 1, &windowName);
