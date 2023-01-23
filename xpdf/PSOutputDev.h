@@ -15,10 +15,18 @@
 
 #include <stddef.h>
 #include "config.h"
+#include "Object.h"
 #include "OutputDev.h"
 
 class GfxPath;
 class GfxFont;
+
+//------------------------------------------------------------------------
+// Parameters
+//------------------------------------------------------------------------
+
+// Generate Level 1 PostScript?
+extern GBool psOutLevel1;
 
 //------------------------------------------------------------------------
 // PSOutputDev
@@ -34,7 +42,8 @@ class PSOutputDev: public OutputDev {
 public:
 
   // Open a PostScript output file, and write the prolog.
-  PSOutputDev(char *fileName, Catalog *catalog, int firstPage, int lastPage);
+  PSOutputDev(char *fileName, Catalog *catalog,
+	      int firstPage, int lastPage, GBool embedType11);
 
   // Destructor -- writes the trailer and closes the file.
   virtual ~PSOutputDev();
@@ -103,22 +112,40 @@ public:
 			     int width, int height, GBool invert,
 			     GBool inlineImg);
   virtual void drawImage(GfxState *state, Stream *str, int width,
-			 int height, GfxColorSpace *colorSpace,
+			 int height, GfxImageColorMap *colorMap,
 			 GBool inlineImg);
 
 private:
 
   void setupFont(GfxFont *font);
+  void setupEmbeddedFont(Ref *id);
+  void setupEmbeddedFont(char *fileName);
   void doPath(GfxPath *path);
-  void doImage(GBool mask, GBool inlineImg, Stream *str,
-	       int width, int height);
+  void doImageL1(GfxImageColorMap *colorMap,
+		 GBool invert, GBool inlineImg,
+		 Stream *str, int width, int height, int len);
+  void doImage(GfxImageColorMap *colorMap,
+	       GBool invert, GBool inlineImg,
+	       Stream *str, int width, int height, int len);
   void writePS(char *fmt, ...);
   void writePSString(GString *s);
-  void writeStream(Stream *str, GBool inlineImg, GBool needA85);
+
+  GBool embedType1;		// embed Type 1 fonts?
 
   FILE *f;			// PostScript file
   PSFileType fileType;		// file / pipe / stdout
   int seqPage;			// current sequential page number
+
+  Ref *fontIDs;			// list of object IDs of all used fonts
+  int fontIDLen;		// number of entries in fontIDs array
+  int fontIDSize;		// size of fontIDs array
+  Ref *fontFileIDs;		// list of object IDs of all embedded fonts
+  int fontFileIDLen;		// number of entries in fontFileIDs array
+  int fontFileIDSize;		// size of fontFileIDs array
+  char **fontFileNames;		// list of names of all embedded external fonts
+  int fontFileNameLen;		// number of entries in fontFileNames array
+  int fontFileNameSize;		// size of fontFileNames array
+
   GBool ok;			// set up ok?
 };
 

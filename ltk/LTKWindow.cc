@@ -16,8 +16,14 @@
 #include <string.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#include <X11/cursorfont.h>
+#ifdef HAVE_LIBXPM
+#include "X11/xpm.h"
+#endif
 #include <LTKConfig.h>
 #include <LTKApp.h>
+#include <LTKMenu.h>
 #include <LTKWindow.h>
 #include <LTKWidget.h>
 #include <LTKBox.h>
@@ -31,71 +37,66 @@ typedef char *XPointer;
 typedef char *XPointer;
 #endif
 
-static Bool isExposeEvent(Display *display, XEvent *e, XPointer win);
+static Bool isExposeEvent(Display *display, XEvent *e, XPointer w);
 
 LTKWindow::LTKWindow(LTKApp *app1, GBool dialog1, char *title1,
+		     char **iconData1, char *defaultWidgetName,
 		     LTKBox *box1) {
   app = app1;
   dialog = dialog1;
   title = new GString(title1);
+  iconData = iconData1;
   width = 0;
   height = 0;
   widgets = NULL;
   box = box1;
   box->setParent(this);
+  selection = NULL;
+  savedCursor = None;
+  busyCursorNest = 0;
+  menu = NULL;
   keyCbk = NULL;
   propCbk = NULL;
   layoutCbk = NULL;
+  if (defaultWidgetName)
+    defaultWidget = findWidget(defaultWidgetName);
+  else
+    defaultWidget = NULL;
   keyWidget = NULL;
+  selectionWidget = NULL;
+  pasteWidget = NULL;
   overWin = NULL;
   xwin = None;
   eventMask = ExposureMask | StructureNotifyMask | VisibilityChangeMask |
-              ButtonPressMask;
-  fgGC = bgGC = brightGC = darkGC = None;
-  fontStruct = NULL;
-  next = NULL;
-  app->addWindow(this);
-}
-
-LTKWindow::LTKWindow(LTKWindow *window) {
-  app = window->app;
-  dialog = window->dialog;
-  title = window->title->copy();
-  width = 0;
-  height = 0;
-  widgets = NULL;
-  box = (LTKBox *)window->box->copy();
-  box->setParent(this);
-  keyCbk = window->keyCbk;
-  propCbk = window->propCbk;
-  layoutCbk = window->layoutCbk;
-  keyWidget = NULL;
-  overWin = NULL;
-  xwin = None;
-  fgGC = bgGC = brightGC = darkGC = None;
+              ButtonPressMask | ButtonReleaseMask | KeyPressMask;
+  installCmap = gFalse;
+  fgGC = bgGC = brightGC = darkGC = xorGC = None;
   fontStruct = NULL;
   next = NULL;
   app->addWindow(this);
 }
 
 LTKWindow::~LTKWindow() {
-  XEvent event;
-
   if (xwin) {
     XFreeFont(display, fontStruct);
     XFreeGC(display, fgGC);
     XFreeGC(display, bgGC);
     XFreeGC(display, brightGC);
     XFreeGC(display, darkGC);
+    XFreeGC(display, xorGC);
+    if (installCmap)
+      XFreeColormap(display, colormap);
     XUnmapWindow(display, xwin);
     XDestroyWindow(display, xwin);
-    XSync(display, True);
-    while (XCheckWindowEvent(display, xwin, 0xffffffff, &event)) ;
   }
   app->setGrabWin(NULL);
   app->delWindow(this);
   delete title;
   delete box;
+  if (selection)
+    delete selection;
+  if (menu)
+    delete menu;
 }
 
 LTKWidget *LTKWindow::addWidget(LTKWidget *widget) {
@@ -121,16 +122,6 @@ LTKWidget *LTKWindow::delWidget(LTKWidget *widget) {
   return NULL;
 }
 
-LTKWidget *LTKWindow::findWidget(Window xwin1) {
-  LTKWidget *widget;
-
-  for (widget = widgets; widget; widget = widget->getNext()) {
-    if (widget->getXWindow() == xwin1)
-      break;
-  }
-  return widget;
-}
-
 LTKWidget *LTKWindow::findWidget(char *name) {
   LTKWidget *widget;
 
@@ -139,16 +130,6 @@ LTKWidget *LTKWindow::findWidget(char *name) {
       break;
   }
   return widget;
-}
-
-void LTKWindow::setKeyCbk(LTKWindowKeyCbk cbk) {
-  keyCbk = cbk;
-  if (keyCbk)
-    eventMask |= KeyPressMask;
-  else
-    eventMask &= ~KeyPressMask;
-  if (xwin != None)
-    XSelectInput(display, xwin, eventMask);
 }
 
 void LTKWindow::setPropChangeCbk(LTKWindowPropCbk cbk) {
@@ -181,6 +162,7 @@ GBool LTKWindow::checkFills(char **err) {
 
 void LTKWindow::layout(int x, int y, int width1, int height1) {
   XColor bgXcol;
+  XColor xcol;
   XGCValues gcValues;
   int minWidth, minHeight;
   int width2, height2;
@@ -189,6 +171,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   XWMHints *wmHints;
   XClassHint *classHints;
   XTextProperty windowName, iconName;
+  Atom protocol;
   GBool newWin;
 
   // create window and GC's so widgets can use font info, etc.
@@ -203,15 +186,18 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
     xwin = XCreateSimpleWindow(display, RootWindow(display, screenNum),
 			       (x < 0) ? 0 : x, (y < 0) ? 0 : y, 1, 1, 0,
 			       fgColor, bgColor);
+    app->registerXWindow(xwin, this, NULL);
     XSelectInput(display, xwin, eventMask);
     gcValues.foreground = fgColor;
     gcValues.background = bgColor;
     gcValues.line_width = 0;
     gcValues.line_style = LineSolid;
-    gcValues.graphics_exposures = False;
+    gcValues.graphics_exposures = True;
+    fontStruct = app->getFontResource("font", LTK_WIN_FONT);
+    gcValues.font = fontStruct->fid;
     fgGC = XCreateGC(display, xwin,
 		     GCForeground | GCBackground | GCLineWidth | GCLineStyle |
-		     GCGraphicsExposures,
+		     GCGraphicsExposures | GCFont,
 		     &gcValues);
     gcValues.foreground = bgColor;
     bgGC = XCreateGC(display, xwin,
@@ -230,8 +216,23 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
 		       GCForeground | GCBackground | GCLineWidth |
 		       GCLineStyle | GCGraphicsExposures,
 		       &gcValues);
-    fontStruct = app->getFontResource("font", LTK_WIN_FONT);
-    XSetFont(display, fgGC, fontStruct->fid);
+    gcValues.foreground = fgColor ^ bgColor;
+    gcValues.function = GXxor;
+    xorGC = XCreateGC(display, xwin,
+		      GCForeground | GCBackground | GCLineWidth | GCLineStyle |
+		      GCGraphicsExposures | GCFunction,
+		      &gcValues);
+    colormap = DefaultColormap(display, screenNum);
+    if (installCmap) {
+      // ensure that BlackPixel and WhitePixel are reserved in the
+      // new colormap
+      xcol.red = xcol.green = xcol.blue = 0;
+      XAllocColor(display, colormap, &xcol);
+      xcol.red = xcol.green = xcol.blue = 65535;
+      XAllocColor(display, colormap, &xcol);
+      colormap = XCopyColormapAndFree(display, colormap);
+      XSetWindowColormap(display, xwin, colormap);
+    }
   } else {
     newWin = gFalse;
   }
@@ -257,7 +258,7 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
   // finish the layout and create the widget subwindows
   box->layout3();
 
-  // set window properties
+  // set window properties and protocols
   if (newWin) {
     sizeHints = XAllocSizeHints();
     wmHints = XAllocWMHints();
@@ -279,11 +280,21 @@ void LTKWindow::layout(int x, int y, int width1, int height1) {
       wmHints->input = True;
       wmHints->initial_state = NormalState;
       wmHints->flags = InputHint | StateHint;
+#ifdef HAVE_LIBXPM
+      if (iconData) {
+	if (XpmCreatePixmapFromData(display, xwin, iconData,
+				    &wmHints->icon_pixmap, NULL, NULL) ==
+	    XpmSuccess)
+	  wmHints->flags |= IconPixmapHint;
+      }
+#endif
       classHints->res_name = app->getAppName()->getCString();
       classHints->res_class = app->getAppName()->getCString();
       XSetWMProperties(display, xwin, &windowName, &iconName,
 		       NULL, 0, sizeHints, wmHints, classHints);
     }
+    protocol = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, xwin, &protocol, 1);
   }
 
   // call layout callback
@@ -335,23 +346,53 @@ void LTKWindow::map() {
 
 static Bool isExposeEvent(Display *display, XEvent *e, XPointer w) {
   LTKWindow *win;
+  LTKWidget *widget;
   Window xwin;
 
   win = (LTKWindow *)w;
-  xwin = e->xexpose.window;
+  xwin = e->xany.window;
   return e->type == Expose &&
-	 (win->getXWindow() == xwin || win->findWidget(xwin));
+         win->getApp()->findWindow(xwin, &widget) == win;
 }
 
 void LTKWindow::redraw() {
   box->redraw();
 }
 
-void LTKWindow::keyPress(KeySym key, char *s, int n) {
+void LTKWindow::redrawBackground() {
+  box->redrawBackground();
+}
+
+void LTKWindow::setSelection(LTKWidget *widget, GString *text) {
+  selectionWidget = widget;
+  if (selection)
+    delete selection;
+  selection = text;
+  //~ this shouldn't use CurrentTime (?)
+  XSetSelectionOwner(display, XA_PRIMARY, xwin, CurrentTime);
+}
+
+void LTKWindow::requestPaste(LTKWidget *widget) {
+  Atom prop;
+
+  prop = XInternAtom(display, "XPDF_SELECTION", False);
+  //~ this shouldn't use CurrentTime (?)
+  XConvertSelection(display, XA_PRIMARY, XA_STRING, prop, xwin, CurrentTime);
+  pasteWidget = widget;
+}
+
+void LTKWindow::postMenu(int mx, int my) {
+  if (menu)
+    menu->post(this, mx, my, NULL);
+}
+
+void LTKWindow::keyPress(KeySym key, Guint modifiers, char *s, int n) {
   if (keyWidget)
-    keyWidget->keyPress(key, s, n);
+    keyWidget->keyPress(key, modifiers, s, n);
   else if (keyCbk)
-    (*keyCbk)(this, key, s, n);
+    (*keyCbk)(this, key, modifiers, s, n);
+  else if (defaultWidget && n > 0 && (s[0] == '\n' || s[0] == '\r'))
+    defaultWidget->activateDefault();
 }
 
 void LTKWindow::propChange(Atom atom) {
@@ -366,7 +407,7 @@ GC LTKWindow::makeGC(unsigned long color, int lineWidth, int lineStyle) {
   gcValues.foreground = color;
   gcValues.line_width = lineWidth;
   gcValues.line_style = lineStyle;
-  gcValues.graphics_exposures = False;
+  gcValues.graphics_exposures = True;
   gc = XCreateGC(display, xwin,
 		 GCForeground | GCLineWidth | GCLineStyle |
 		 GCGraphicsExposures,
@@ -390,5 +431,48 @@ void LTKWindow::setTitle(GString *title1) {
 }
 
 void LTKWindow::setCursor(Guint cursor) {
-  XDefineCursor(display, xwin, XCreateFontCursor(display, cursor));
+  Cursor c;
+
+  if (busyCursorNest == 0) {
+    c = XCreateFontCursor(display, cursor);
+    XDefineCursor(display, xwin, c);
+    XFreeCursor(display, c);
+  }
+  savedCursor = cursor;
+}
+
+void LTKWindow::setDefaultCursor() {
+  if (busyCursorNest == 0)
+    XUndefineCursor(display, xwin);
+  savedCursor = None;
+}
+
+void LTKWindow::setBusyCursor(GBool busy) {
+  Cursor c;
+
+  if (busy) {
+    if (busyCursorNest == 0) {
+      c = XCreateFontCursor(display, XC_watch);
+      XDefineCursor(display, xwin, c);
+      XFreeCursor(display, c);
+      XFlush(display);
+    }
+    ++busyCursorNest;
+  } else if (busyCursorNest > 0) {
+    --busyCursorNest;
+    if (busyCursorNest == 0) {
+      if (savedCursor == None) {
+	XUndefineCursor(display, xwin);
+      } else {
+	c = XCreateFontCursor(display, savedCursor);
+	XDefineCursor(display, xwin, c);
+	XFreeCursor(display, c);
+	XFlush(display);
+      }
+    }
+  }
+}
+
+void LTKWindow::raise() {
+  XMapRaised(display, xwin);
 }

@@ -16,8 +16,8 @@
 #include <gtypes.h>
 #include <GString.h>
 #include <parseargs.h>
-#include <fileNames.h>
-#include <cover.h>
+#include <gfile.h>
+#include <gmem.h>
 #include <LTKAll.h>
 #include "Object.h"
 #include "Stream.h"
@@ -30,10 +30,12 @@
 #include "PDFDoc.h"
 #include "XOutputDev.h"
 #include "PSOutputDev.h"
+#include "TextOutputDev.h"
 #include "Params.h"
 #include "Error.h"
 #include "config.h"
 
+// hack around old X includes which are missing these symbols
 #ifndef XK_Page_Up
 #define XK_Page_Up              0xFF55
 #endif
@@ -41,16 +43,44 @@
 #define XK_Page_Down            0xFF56
 #endif
 
+//------------------------------------------------------------------------
+// misc constants / enums
+//------------------------------------------------------------------------
+
 #define remoteCmdLength 256
 
-static void killApp();
+enum XpdfMenuItem {
+  menuOpen,
+  menuSavePDF,
+  menuRotateLeft,
+  menuRotateRight,
+  menuQuit
+};
+
+//------------------------------------------------------------------------
+// prototypes
+//------------------------------------------------------------------------
+
+// loadFile / displayPage
 static GBool loadFile(GString *fileName);
 static void displayPage(int page1, int zoom1, int rotate1);
-static void keyPressCbk(LTKWindow *win, KeySym key, char *s, int n);
-static void layoutCbk(LTKWindow *win);
-static void propChangeCbk(LTKWindow *win, Atom atom);
+
+// key press and menu callbacks
+static void keyPressCbk(LTKWindow *win1, KeySym key, Guint modifiers,
+			char *s, int n);
+static void menuCbk(LTKMenuItem *item);
+
+// mouse callbacks
 static void buttonPressCbk(LTKWidget *canvas1, int n,
-			   int mx, int my, int button);
+			   int mx, int my, int button, GBool dblClick);
+static void buttonReleaseCbk(LTKWidget *canvas1, int n,
+			     int mx, int my, int button, GBool click);
+static void doLink(int mx, int my);
+static void mouseMoveCbk(LTKWidget *widget, int widgetNum, int mx, int my);
+static void mouseDragCbk(LTKWidget *widget, int widgetNum,
+			 int mx, int my, int button);
+
+// button callbacks
 static void nextPageCbk(LTKWidget *button, int n, GBool on);
 static void nextTenPageCbk(LTKWidget *button, int n, GBool on);
 static void prevPageCbk(LTKWidget *button, int n, GBool on);
@@ -58,42 +88,82 @@ static void prevTenPageCbk(LTKWidget *button, int n, GBool on);
 static void pageNumCbk(LTKWidget *textIn, int n, GString *text);
 static void zoomInCbk(LTKWidget *button, int n, GBool on);
 static void zoomOutCbk(LTKWidget *button, int n, GBool on);
-static void rotateCWCbk(LTKWidget *button, int n, GBool on);
-static void rotateCCWCbk(LTKWidget *button, int n, GBool on);
 static void postScriptCbk(LTKWidget *button, int n, GBool on);
-static void psButtonCbk(LTKWidget *button, int n, GBool on);
-static void psKeyPressCbk(LTKWindow *win, KeySym key, char *s, int n);
 static void aboutCbk(LTKWidget *button, int n, GBool on);
-static void closeAboutCbk(LTKWidget *button, int n, GBool on);
-static void aboutKeyPressCbk(LTKWindow *win, KeySym key, char *s, int n);
 static void quitCbk(LTKWidget *button, int n, GBool on);
+
+// scrollbar callbacks
 static void scrollVertCbk(LTKWidget *scrollbar, int n, int val);
 static void scrollHorizCbk(LTKWidget *scrollbar, int n, int val);
 
+// misc callbacks
+static void layoutCbk(LTKWindow *win1);
+static void propChangeCbk(LTKWindow *win1, Atom atom);
+
+// selection
+static void setSelection(int newXMin, int newYMin, int newXMax, int newYMax);
+
+// "Open" dialog
+static void mapOpenDialog();
+static void openButtonCbk(LTKWidget *button, int n, GBool on);
+static void openSelectCbk(LTKWidget *widget, int n, GString *name);
+
+// "Save PDF" dialog
+static void mapSaveDialog();
+static void saveButtonCbk(LTKWidget *button, int n, GBool on);
+static void saveSelectCbk(LTKWidget *widget, int n, GString *name);
+
+// "PostScript" dialog
+static void mapPSDialog();
+static void psButtonCbk(LTKWidget *button, int n, GBool on);
+
+// "About" window
+static void mapAboutWin();
+static void closeAboutCbk(LTKWidget *button, int n, GBool on);
+
+// "Find" window
+static void findCbk(LTKWidget *button, int n, GBool on);
+static void mapFindWin();
+static void findButtonCbk(LTKWidget *button, int n, GBool on);
+static void doFind(char *s);
+
+// app kill callback
+static void killCbk(LTKWindow *win1);
+
+//------------------------------------------------------------------------
+// GUI includes
+//------------------------------------------------------------------------
+
+#include "xpdfIcon.xpm"
 #include "leftArrow.xbm"
 #include "dblLeftArrow.xbm"
 #include "rightArrow.xbm"
 #include "dblRightArrow.xbm"
 #include "zoomIn.xbm"
 #include "zoomOut.xbm"
-#include "rotateCW.xbm"
-#include "rotateCCW.xbm"
+#include "find.xbm"
 #include "postscript.xbm"
 #include "about.xbm"
 #include "xpdf-ltk.h"
 
+//------------------------------------------------------------------------
+// command line options
+//------------------------------------------------------------------------
+
 static XrmOptionDescRec opts[] = {
-  {"-display",         ".display",         XrmoptionSepArg,    NULL},
-  {"-foreground",      ".foreground",      XrmoptionSepArg,    NULL},
-  {"-fg",              ".foreground",      XrmoptionSepArg,    NULL},
-  {"-background",      ".background",      XrmoptionSepArg,    NULL},
-  {"-bg",              ".background",      XrmoptionSepArg,    NULL},
-  {"-geometry",        ".geometry",        XrmoptionSepArg,    NULL},
-  {"-g",               ".geometry",        XrmoptionSepArg,    NULL},
-  {"-font",            ".font",            XrmoptionSepArg,    NULL},
-  {"-fn",              ".font",            XrmoptionSepArg,    NULL},
-  {"-z",               ".initialZoom",     XrmoptionSepArg,    NULL},
-  {"-ps",              ".psFile",          XrmoptionSepArg,    NULL},
+  {"-display",       ".display",       XrmoptionSepArg,  NULL},
+  {"-foreground",    ".foreground",    XrmoptionSepArg,  NULL},
+  {"-fg",            ".foreground",    XrmoptionSepArg,  NULL},
+  {"-background",    ".background",    XrmoptionSepArg,  NULL},
+  {"-bg",            ".background",    XrmoptionSepArg,  NULL},
+  {"-geometry",      ".geometry",      XrmoptionSepArg,  NULL},
+  {"-g",             ".geometry",      XrmoptionSepArg,  NULL},
+  {"-font",          ".font",          XrmoptionSepArg,  NULL},
+  {"-fn",            ".font",          XrmoptionSepArg,  NULL},
+  {"-cmap",          ".installCmap",   XrmoptionNoArg,   (XPointer)"on"},
+  {"-rgb",           ".rgbCubeSize",   XrmoptionSepArg,  NULL},
+  {"-z",             ".initialZoom",   XrmoptionSepArg,  NULL},
+  {"-ps",            ".psFile",        XrmoptionSepArg,  NULL},
   {NULL}
 };
 
@@ -118,10 +188,14 @@ static ArgDesc argDesc[] = {
    "raise xpdf remote server window (with -remote only)"},
   {"-quit",     argFlag,        &doRemoteQuit,  0,
    "kill xpdf remote server (with -remote only)"},
-  {"-rgb",      argInt,         &rgbCubeSize,   0,
+  {"-cmap",     argFlagDummy,   NULL,           0,
+   "install a private colormap"},
+  {"-rgb",      argIntDummy,    NULL,           0,
    "biggest RGB cube to allocate (default is 5)"},
   {"-ps",       argStringDummy, NULL,           0,
    "default PostScript file/command name"},
+  {"-level1",   argFlag,        &psOutLevel1,   0,
+   "generate Level 1 PostScript"},
   {"-cmd",      argFlag,        &printCommands, 0,
    "print commands as they're executed"},
   {"-h",        argFlag,        &printHelp,     0,
@@ -130,6 +204,10 @@ static ArgDesc argDesc[] = {
    "print usage information"},
   {NULL}
 };
+
+//------------------------------------------------------------------------
+// global variables
+//------------------------------------------------------------------------
 
 // zoom factor is 1.2 (similar to DVI magsteps)
 #define minZoom -5
@@ -150,9 +228,21 @@ static int zoom;
 static int rotate;
 static GBool quit;
 
+static LinkAction *linkAction;	// mouse pointer is over this link
+static int			// coordinates of current selection:
+  selectXMin, selectYMin,	//   (xMin==xMax || yMin==yMax) means there
+  selectXMax, selectYMax;	//   is no selection
+static GBool lastDragLeft;	// last dragged selection edge was left/right
+static GBool lastDragTop;	// last dragged selection edge was top/bottom
+static int panMX, panMY;	// last mouse position for pan
+
 static GString *defPSFileName;
 static GString *psFileName;
 static int psFirstPage, psLastPage;
+
+static GString *fileReqDir;	// current directory for file requesters
+
+static GString *urlCommand;	// command to execute for URI links
 
 static LTKApp *app;
 static Display *display;
@@ -161,23 +251,43 @@ static LTKScrollingCanvas *canvas;
 static LTKScrollbar *hScrollbar, *vScrollbar;
 static LTKTextIn *pageNumText;
 static LTKLabel *numPagesLabel;
+static LTKLabel *linkLabel;
 static LTKWindow *aboutWin;
 static LTKWindow *psDialog;
+static LTKWindow *openDialog;
+static LTKWindow *saveDialog;
+static LTKWindow *findWin;
 static Atom remoteAtom;
+static GC selectGC;
+
+//------------------------------------------------------------------------
+// main program
+//------------------------------------------------------------------------
 
 int main(int argc, char *argv[]) {
   Window xwin;
+  XGCValues gcValues;
   char cmd[remoteCmdLength];
+  LTKMenu *menu;
   GString *name;
   GString *title;
-  int pg, zoom1;
+  int pg;
   int x, y;
   Guint width, height;
   GBool ok;
   char s[20];
+  int ret;
 
-  // init coverage module
-  coverInit(200);
+  // initialize
+  app = NULL;
+  win = NULL;
+  out = NULL;
+  remoteAtom = None;
+  doc = NULL;
+  xref = NULL;
+  psFileName = NULL;
+  fileReqDir = getCurrentDir();
+  ret = 0;
 
   // parse args
   ok = parseArgs(argDesc, &argc, argv);
@@ -190,20 +300,22 @@ int main(int argc, char *argv[]) {
 
   // create LTKApp (and parse X-related args)
   app = new LTKApp("xpdf", opts, &argc, argv);
+  app->setKillCbk(&killCbk);
   display = app->getDisplay();
-  win = NULL;
 
   // check command line
   if (doRemoteRaise)
-    ok = ok && remoteName[5] && !doRemoteQuit &&
-         (argc == 1 || argc == 2 || argc == 3);
+    ok = ok && remoteName[5] && !doRemoteQuit && argc >= 1 && argc <= 3;
   else if (doRemoteQuit)
     ok = ok && remoteName[5] && argc == 1;
   else
-    ok = ok && (argc == 2 || argc == 3);
+    ok = ok && argc >= 1 && argc <= 3;
   if (!ok || printHelp) {
+    fprintf(stderr, "xpdf version %s\n", xpdfVersion);
+    fprintf(stderr, "%s\n", xpdfCopyright);
     printUsage("xpdf", "[<PDF-file> [<page>]]", argDesc);
-    exit(1);
+    ret = 1;
+    goto done2;
   }
   if (argc >= 2)
     name = new GString(argv[1]);
@@ -224,6 +336,7 @@ int main(int argc, char *argv[]) {
 		pg, name->getCString());
 	XChangeProperty(display, xwin, remoteAtom, remoteAtom, 8,
 			PropModeReplace, (Guchar *)cmd, strlen(cmd) + 1);
+	delete name;
       } else if (doRemoteRaise) {
 	XChangeProperty(display, xwin, remoteAtom, remoteAtom, 8,
 			PropModeReplace, (Guchar *)"r", 2);
@@ -231,13 +344,10 @@ int main(int argc, char *argv[]) {
 	XChangeProperty(display, xwin, remoteAtom, remoteAtom, 8,
 			PropModeReplace, (Guchar *)"q", 2);
       }
-      delete app;
-      exit(0);
+      goto done2;
     }
-    if (!name)
-      exit(0);
-  } else {
-    remoteAtom = None;
+    if (doRemoteQuit)
+      goto done2;
   }
 
   // print banner
@@ -245,62 +355,95 @@ int main(int argc, char *argv[]) {
   fprintf(errFile, "%s\n", xpdfCopyright);
 
   // open PDF file
-  doc = NULL;
-  xref = NULL;
   defPSFileName = app->getStringResource("psFile", NULL);
-  psFileName = NULL;
-  if (!loadFile(name)) {
-    delete app;
-    exit(1);
+  if (name) {
+    if (!loadFile(name)) {
+      ret = 1;
+      goto done1;
+    }
+    delete fileReqDir;
+    fileReqDir = makePathAbsolute(grabPath(name->getCString()));
   }
 
   // check for legal page number
-  if (pg < 1 || pg > doc->getNumPages())
+  if (doc && (pg < 1 || pg > doc->getNumPages()))
     pg = 1;
 
   // create window
   win = makeWindow(app);
+  menu = makeMenu();
+  win->setMenu(menu);
   canvas = (LTKScrollingCanvas *)win->findWidget("canvas");
   hScrollbar = (LTKScrollbar *)win->findWidget("hScrollbar");
   vScrollbar = (LTKScrollbar *)win->findWidget("vScrollbar");
   pageNumText = (LTKTextIn *)win->findWidget("pageNum");
   numPagesLabel = (LTKLabel *)win->findWidget("numPages");
+  linkLabel = (LTKLabel *)win->findWidget("link");
   win->setKeyCbk(&keyPressCbk);
   win->setLayoutCbk(&layoutCbk);
   canvas->setButtonPressCbk(&buttonPressCbk);
+  canvas->setButtonReleaseCbk(&buttonReleaseCbk);
+  canvas->setMouseMoveCbk(&mouseMoveCbk);
+  canvas->setMouseDragCbk(&mouseDragCbk);
+  hScrollbar->setRepeatPeriod(0);
+  vScrollbar->setRepeatPeriod(0);
 
   // get X resources
-  zoom1 = app->getIntResource("initialZoom", defZoom);
-  if (zoom1 < minZoom)
-    zoom1 = minZoom;
-  else if (zoom1 > maxZoom)
-    zoom1 = maxZoom;
+  psOutLevel1 = app->getBoolResource("psLevel1", gFalse);
+  installCmap = app->getBoolResource("installCmap", gFalse);
+  if (installCmap)
+    win->setInstallCmap(gTrue);
+  rgbCubeSize = app->getIntResource("rgbCubeSize", defaultRGBCube);
+  zoom = app->getIntResource("initialZoom", defZoom);
+  if (zoom < minZoom)
+    zoom = minZoom;
+  else if (zoom > maxZoom)
+    zoom = maxZoom;
   x = -1;
   y = -1;
-  if (doc->getPageRotate(pg) == 90 || doc->getPageRotate(pg) == 270) {
+  if (!doc) {
+    width = 612;
+    height = 792;
+  } else if (doc->getPageRotate(pg) == 90 || doc->getPageRotate(pg) == 270) {
     width = doc->getPageHeight(pg);
     height = doc->getPageWidth(pg);
   } else {
     width = doc->getPageWidth(pg);
     height = doc->getPageHeight(pg);
   }
-  width = (width * zoomDPI[zoom1 - minZoom]) / 72 + 28;
+  width = (width * zoomDPI[zoom - minZoom]) / 72 + 28;
   if (width > (Guint)app->getDisplayWidth() - 100)
     width = app->getDisplayWidth() - 100;
-  height = (height * zoomDPI[zoom1 - minZoom]) / 72 + 56;
+  height = (height * zoomDPI[zoom - minZoom]) / 72 + 56;
   if (height > (Guint)app->getDisplayHeight() - 100)
     height = app->getDisplayHeight() - 100;
   app->getGeometryResource("geometry", &x, &y, &width, &height);
 
+  // get misc resources
+  urlCommand = app->getStringResource("urlCommand", NULL);
+
   // finish setting up window
-  sprintf(s, "of %d", doc->getNumPages());
+  sprintf(s, "of %d", doc ? doc->getNumPages() : 0);
   numPagesLabel->setText(s);
-  title = new GString("xpdf: ");
-  title->append(name);
+  if (name) {
+    title = new GString("xpdf: ");
+    title->append(name);
+  } else {
+    title = new GString("xpdf");
+  }
   win->setTitle(title);
   win->layout(x, y, width, height);
   win->map();
   aboutWin = NULL;
+  psDialog = NULL;
+  openDialog = NULL;
+  saveDialog = NULL;
+  findWin = NULL;
+  gcValues.foreground = BlackPixel(display, win->getScreenNum()) ^
+                        WhitePixel(display, win->getScreenNum());
+  gcValues.function = GXxor;
+  selectGC = XCreateGC(display, win->getXWindow(),
+		       GCForeground | GCFunction, &gcValues);
 
   // set up remote server
   if (remoteAtom != None) {
@@ -313,7 +456,7 @@ int main(int argc, char *argv[]) {
   out = new XOutputDev(win);
 
   // display first page
-  displayPage(pg, zoom1, 0);
+  displayPage(pg, zoom, 0);
 
   // event loop
   quit = gFalse;
@@ -321,33 +464,45 @@ int main(int argc, char *argv[]) {
     app->doEvent(gTrue);
   } while (!quit);
 
+ done1:
+  // release remote control atom
+  if (remoteAtom != None)
+    XSetSelectionOwner(display, remoteAtom, None, CurrentTime);
+
+ done2:
   // free stuff
-  killApp();
-  delete doc;
-  delete psFileName;
+  if (out)
+    delete out;
+  if (win)
+    delete win;
+  if (aboutWin)
+    delete aboutWin;
+  if (findWin)
+    delete findWin;
+  if (app)
+    delete app;
+  if (doc)
+    delete doc;
+  if (psFileName)
+    delete psFileName;
   if (defPSFileName)
     delete defPSFileName;
+  if (fileReqDir)
+    delete fileReqDir;
+  if (urlCommand)
+    delete urlCommand;
   freeParams();
 
   // check for memory leaks
   Object::memCheck(errFile);
   gMemReport(errFile);
 
-  // print coverage info
-  coverDump(errFile);
-
-  return 0;
+  return ret;
 }
 
-static void killApp() {
-  delete out;
-  if (remoteAtom != None)
-    XSetSelectionOwner(display, remoteAtom, None, CurrentTime);
-  delete win;
-  if (aboutWin)
-    delete aboutWin;
-  delete app;
-}
+//------------------------------------------------------------------------
+// loadFile / displayPage
+//------------------------------------------------------------------------
 
 static GBool loadFile(GString *fileName) {
   GString *title;
@@ -356,22 +511,21 @@ static GBool loadFile(GString *fileName) {
   char *p;
 
   // busy cursor
-  if (win) {
-    win->setCursor(XC_watch);
-    XFlush(display);
-  }
+  if (win)
+    win->setBusyCursor(gTrue);
 
   // open PDF file
   newDoc = new PDFDoc(fileName);
   if (!newDoc->isOk()) {
     delete newDoc;
     if (win)
-      win->setCursor(XC_top_left_arrow);
+      win->setBusyCursor(gFalse);
     return gFalse;
   }
 
   // replace old document
-  delete doc;
+  if (doc)
+    delete doc;
   doc = newDoc;
 
   // nothing displayed yet
@@ -401,7 +555,7 @@ static GBool loadFile(GString *fileName) {
     win->setTitle(title);
     sprintf(s, "of %d", doc->getNumPages());
     numPagesLabel->setText(s);
-    win->setCursor(XC_top_left_arrow);
+    win->setBusyCursor(gFalse);
   }
 
   // done
@@ -411,16 +565,26 @@ static GBool loadFile(GString *fileName) {
 static void displayPage(int page1, int zoom1, int rotate1) {
   char s[20];
 
+  // check for document
+  if (!doc)
+    return;
+
   // busy cursor
-  if (win) {
-    win->setCursor(XC_watch);
-    XFlush(display);
-  }
+  if (win)
+    win->setBusyCursor(gTrue);
 
   // new page/zoom/rotate values
   page = page1;
   zoom = zoom1;
   rotate = rotate1;
+
+  // initialize mouse-related stuff
+  linkAction = NULL;
+  win->setDefaultCursor();
+  linkLabel->setText(NULL);
+  selectXMin = selectXMax = 0;
+  selectYMin = selectYMax = 0;
+  lastDragLeft = lastDragTop = gTrue;
 
   // draw the page
   doc->displayPage(out, page, zoomDPI[zoom - minZoom], rotate, gTrue);
@@ -431,15 +595,30 @@ static void displayPage(int page1, int zoom1, int rotate1) {
   pageNumText->setText(s);
 
   // back to regular cursor
-  win->setCursor(XC_top_left_arrow);
+  win->setBusyCursor(gFalse);
 }
 
-static void keyPressCbk(LTKWindow *win, KeySym key, char *s, int n) {
+//------------------------------------------------------------------------
+// key press and menu callbacks
+//------------------------------------------------------------------------
+
+static void keyPressCbk(LTKWindow *win1, KeySym key, Guint modifiers,
+			char *s, int n) {
   if (n > 0) {
     switch (s[0]) {
+    case 'O':
+    case 'o':
+      mapOpenDialog();
+      break;
+    case 'F':
+    case 'f':
+      mapFindWin();
+      break;
+    case 'N':
     case 'n':
       nextPageCbk(NULL, 0, gTrue);
       break;
+    case 'P':
     case 'p':
       prevPageCbk(NULL, 0, gTrue);
       break;
@@ -464,8 +643,10 @@ static void keyPressCbk(LTKWindow *win, KeySym key, char *s, int n) {
       }
       break;
     case '\014':		// ^L
+      win->redraw();
       displayPage(page, zoom, rotate);
       break;
+    case 'Q':
     case 'q':
       quitCbk(NULL, 0, gTrue);
       break;
@@ -523,185 +704,395 @@ static void keyPressCbk(LTKWindow *win, KeySym key, char *s, int n) {
   }
 }
 
-static void layoutCbk(LTKWindow *win) {
-  hScrollbar->setLimits(0, canvas->getRealWidth() - 1);
-  hScrollbar->setPos(hScrollbar->getPos(), canvas->getWidth());
-  hScrollbar->setScrollDelta(16);
-  vScrollbar->setLimits(0, canvas->getRealHeight() - 1);
-  vScrollbar->setPos(vScrollbar->getPos(), canvas->getHeight());
-  vScrollbar->setScrollDelta(16);
-  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-}
+static void menuCbk(LTKMenuItem *item) {
+  int r;
 
-static void propChangeCbk(LTKWindow *win, Atom atom) {
-  Window xwin;
-  char *cmd;
-  Atom type;
-  int format;
-  Gulong size, remain;
-  char *p;
-  GString *newFileName;
-  int newPage;
-
-  // get command
-  xwin = win->getXWindow();
-  if (XGetWindowProperty(display, xwin, remoteAtom,
-			 0, remoteCmdLength/4, True, remoteAtom,
-			 &type, &format, &size, &remain,
-			 (Guchar **)&cmd) != Success)
-    return;
-  if (size == 0)
-    return;
-
-  // raise window
-  if (cmd[0] == 'D' || cmd[0] == 'r'){
-    XMapRaised(display, xwin);
-    XFlush(display);
-  }
-
-  // display file / page
-  if (cmd[0] == 'd' || cmd[0] == 'D') {
-    p = cmd + 2;
-    newPage = atoi(p);
-    if (!(p = strchr(p, ' ')))
-      return;
-    newFileName = new GString(p + 1);
-    XFree(cmd);
-    if (newFileName->cmp(doc->getFileName())) {
-      if (!loadFile(newFileName))
-	return;
-    } else {
-      delete newFileName;
+  switch (item->getItemNum()) {
+  case menuOpen:
+    mapOpenDialog();
+    break;
+  case menuSavePDF:
+    if (doc)
+      mapSaveDialog();
+    break;
+  case menuRotateLeft:
+    if (doc) {
+      r = (rotate == 0) ? 270 : rotate - 90;
+      displayPage(page, zoom, r);
     }
-    if (newPage != page && newPage >= 1 && newPage <= doc->getNumPages())
-      displayPage(newPage, zoom, rotate);
-
-  // quit
-  } else if (cmd[0] == 'q') {
+    break;
+  case menuRotateRight:
+    if (doc) {
+      r = (rotate == 270) ? 0 : rotate + 90;
+      displayPage(page, zoom, r);
+    }
+    break;
+  case menuQuit:
     quit = gTrue;
+    break;
   }
 }
+
+//------------------------------------------------------------------------
+// mouse callbacks
+//------------------------------------------------------------------------
 
 static void buttonPressCbk(LTKWidget *canvas1, int n,
-			   int mx, int my, int button) {
+			   int mx, int my, int button, GBool dblClick) {
+  if (!doc)
+    return;
+  if (button == 1) {
+    setSelection(mx, my, mx, my);
+  } else if (button == 2) {
+    panMX = mx - hScrollbar->getPos();
+    panMY = my - vScrollbar->getPos();
+  }
+}
+
+static void buttonReleaseCbk(LTKWidget *canvas1, int n,
+			     int mx, int my, int button, GBool click) {
+  GString *s;
+
+  if (!doc)
+    return;
+
+  if (button == 1) {
+    // selection
+    if (selectXMin < selectXMax && selectYMin < selectYMax) {
+#ifndef NO_TEXT_SELECT
+      if (doc->okToCopy()) {
+	s = out->getText(selectXMin, selectYMin, selectXMax, selectYMax);
+	win->setSelection(NULL, s);
+      }
+#endif
+
+    // link
+    } else {
+      setSelection(mx, my, mx, my);
+      doLink(mx, my);
+    }
+  }
+}
+
+static void doLink(int mx, int my) {
+  LinkActionKind kind;
   LinkAction *action = NULL;
-  LinkGoto *gotoAction;
-  Object linkObj;
-  GString *fileName;
-  GBool needDel;
   LinkDest *dest;
-  LinkURI *uri;
-  Ref pageRef;
+  GString *namedDest;
   char *s;
+  GString *fileName;
+  Ref pageRef;
   int pg;
   double x, y;
   int dx, dy;
+  LTKButtonDialog *dialog;
 
-  if (button == 1) {
-    out->cvtDevToUser(mx, my, &x, &y);
-    if ((action = doc->findLink((int)x, (int)y))) {
+  // look for a link
+  out->cvtDevToUser(mx, my, &x, &y);
+  if ((action = doc->findLink(x, y))) {
+    switch (kind = action->getKind()) {
 
-      // goto action
-      if (action->getKind() == actionGoto) {
-	gotoAction = (LinkGoto *)action;
-	if (gotoAction->getFileName()) {
-	  s = gotoAction->getFileName()->getCString();
-	  if (isAbsolutePath(s))
-	    fileName = new GString(s);
-	  else
-	    fileName = appendToPath(
-			  grabPath(doc->getFileName()->getCString()), s);
-	  if (!loadFile(fileName))
-	    return;
+    // GoTo / GoToR action
+    case actionGoTo:
+    case actionGoToR:
+      if (kind == actionGoTo) {
+	dest = NULL;
+	namedDest = NULL;
+	if ((dest = ((LinkGoTo *)action)->getDest()))
+	  dest = dest->copy();
+	else if ((namedDest = ((LinkGoTo *)action)->getNamedDest()))
+	  namedDest = namedDest->copy();
+      } else {
+	dest = NULL;
+	namedDest = NULL;
+	if ((dest = ((LinkGoToR *)action)->getDest()))
+	  dest = dest->copy();
+	else if ((namedDest = ((LinkGoToR *)action)->getNamedDest()))
+	  namedDest = namedDest->copy();
+	s = ((LinkGoToR *)action)->getFileName()->getCString();
+	//~ translate path name for VMS (deal with '/')
+	if (isAbsolutePath(s))
+	  fileName = new GString(s);
+	else
+	  fileName = appendToPath(
+			 grabPath(doc->getFileName()->getCString()), s);
+	if (!loadFile(fileName)) {
+	  if (dest)
+	    delete dest;
+	  if (namedDest)
+	    delete namedDest;
+	  return;
 	}
-	needDel = gFalse;
-	if (gotoAction->getNamedDest()) {
-	  doc->findDest(gotoAction->getNamedDest(), &linkObj);
-	  if (linkObj.isArray())
-	    gotoAction = new LinkGoto(NULL, &linkObj);
-	  else if (linkObj.isDict())
-	    gotoAction = new LinkGoto("GoTo", &linkObj);
-	  linkObj.free();
-	  if (gotoAction->isOk()) {
-	    needDel = gTrue;
-	  } else {
-	    delete gotoAction;
-	    gotoAction = NULL;
-	  }
-	}
-	if (!(gotoAction && (dest = gotoAction->getDest()))) {
-	  displayPage(1, zoom, 0);
-	} else {
-	  if (gotoAction->getFileName()) {
-	    pg = dest->getPageNum();
-	  } else {
-	    pageRef = dest->getPageRef();
-	    pg = doc->findPage(pageRef.num, pageRef.gen);
-	  }
-	  if (pg > 0 && pg != page)
-	    displayPage(pg, zoom, rotate);
-	  switch (dest->getKind()) {
-	  case destXYZ:
-	    out->cvtUserToDev(dest->getLeft(), dest->getTop(), &dx, &dy);
-	    if (dest->getChangeLeft() || dest->getChangeTop()) {
-	      if (dest->getChangeLeft())
-		hScrollbar->setPos(dx, canvas->getWidth());
-	      if (dest->getChangeTop())
-		vScrollbar->setPos(dy, canvas->getHeight());
-	      canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-	    }
-	    //~ what is the zoom parameter?
-	    break;
-	  case destFit:
-	  case destFitB:
-	    //~ do fit
-	    hScrollbar->setPos(0, canvas->getWidth());
-	    vScrollbar->setPos(0, canvas->getHeight());
-	    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-	    break;
-	  case destFitH:
-	  case destFitBH:
-	    //~ do fit
-	    out->cvtUserToDev(0, dest->getTop(), &dx, &dy);
-	    hScrollbar->setPos(0, canvas->getWidth());
-	    vScrollbar->setPos(dy, canvas->getHeight());
-	    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-	    break;
-	  case destFitV:
-	  case destFitBV:
-	    //~ do fit
-	    out->cvtUserToDev(dest->getLeft(), 0, &dx, &dy);
-	    hScrollbar->setPos(dx, canvas->getWidth());
-	    vScrollbar->setPos(0, canvas->getHeight());
-	    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-	    break;
-	  case destFitR:
-	    //~ do fit
-	    out->cvtUserToDev(dest->getLeft(), dest->getTop(), &dx, &dy);
-	    hScrollbar->setPos(dx, canvas->getWidth());
-	    vScrollbar->setPos(dy, canvas->getHeight());
-	    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
-	    break;
-	  }
-	}
-	if (needDel)
-	  delete gotoAction;
-
-      // URI action
-      } else if (action->getKind() == actionURI) {
-	uri = (LinkURI *)action;
-	fprintf(errFile, "URI: %s\n", uri->getURI()->getCString());
-
-      // unknown action type
-      } else if (action->getKind() == actionUnknown) {
-	error(-1, "Unknown link action type: '%s'",
-	      ((LinkUnknown *)action)->getAction()->getCString());
       }
+      if (namedDest) {
+	dest = doc->findDest(namedDest);
+	delete namedDest;
+      }
+      if (!dest) {
+	if (kind == actionGoToR)
+	  displayPage(1, zoom, 0);
+      } else {
+	if (dest->isPageRef()) {
+	  pageRef = dest->getPageRef();
+	  pg = doc->findPage(pageRef.num, pageRef.gen);
+	} else {
+	  pg = dest->getPageNum();
+	}
+	if (pg > 0 && pg != page)
+	  displayPage(pg, zoom, rotate);
+	else if (pg <= 0)
+	  displayPage(1, zoom, rotate);
+	switch (dest->getKind()) {
+	case destXYZ:
+	  out->cvtUserToDev(dest->getLeft(), dest->getTop(), &dx, &dy);
+	  if (dest->getChangeLeft() || dest->getChangeTop()) {
+	    if (dest->getChangeLeft())
+	      hScrollbar->setPos(dx, canvas->getWidth());
+	    if (dest->getChangeTop())
+	      vScrollbar->setPos(dy, canvas->getHeight());
+	    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+	  }
+	  //~ what is the zoom parameter?
+	  break;
+	case destFit:
+	case destFitB:
+	  //~ do fit
+	  hScrollbar->setPos(0, canvas->getWidth());
+	  vScrollbar->setPos(0, canvas->getHeight());
+	  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+	  break;
+	case destFitH:
+	case destFitBH:
+	  //~ do fit
+	  out->cvtUserToDev(0, dest->getTop(), &dx, &dy);
+	  hScrollbar->setPos(0, canvas->getWidth());
+	  vScrollbar->setPos(dy, canvas->getHeight());
+	  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+	  break;
+	case destFitV:
+	case destFitBV:
+	  //~ do fit
+	  out->cvtUserToDev(dest->getLeft(), 0, &dx, &dy);
+	  hScrollbar->setPos(dx, canvas->getWidth());
+	  vScrollbar->setPos(0, canvas->getHeight());
+	  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+	  break;
+	case destFitR:
+	  //~ do fit
+	  out->cvtUserToDev(dest->getLeft(), dest->getTop(), &dx, &dy);
+	  hScrollbar->setPos(dx, canvas->getWidth());
+	  vScrollbar->setPos(dy, canvas->getHeight());
+	  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+	  break;
+	}
+	delete dest;
+      }
+      break;
+
+    // Launch action
+    case actionLaunch:
+      fileName = ((LinkLaunch *)action)->getFileName();
+      s = fileName->getCString();
+      if (!strcmp(s + fileName->getLength() - 4, ".pdf") ||
+	  !strcmp(s + fileName->getLength() - 4, ".PDF")) {
+	//~ translate path name for VMS (deal with '/')
+	if (isAbsolutePath(s))
+	  fileName = fileName->copy();
+	else
+	  fileName = appendToPath(
+		         grabPath(doc->getFileName()->getCString()), s);
+	if (!loadFile(fileName))
+	  return;
+	displayPage(1, zoom, rotate);
+      } else {
+	fileName = fileName->copy();
+	if (((LinkLaunch *)action)->getParams()) {
+	  fileName->append(' ');
+	  fileName->append(((LinkLaunch *)action)->getParams());
+	}
+#ifdef VMS
+	fileName->insert(0, "spawn/nowait ");
+#elif defined(__EMX__)
+	fileName->insert(0, "start /min /n ");
+#else
+	fileName->append(" &");
+#endif
+	dialog = new LTKButtonDialog(win, "xpdf: Launch",
+				     "Execute the command:",
+				     fileName->getCString(),
+				     NULL, "Ok", "Cancel");
+	if (dialog->go())
+	  system(fileName->getCString());
+	delete dialog;
+	delete fileName;
+      }
+      break;
+
+    // URI action
+    case actionURI:
+      if (urlCommand) {
+	for (s = urlCommand->getCString(); *s; ++s) {
+	  if (s[0] == '%' && s[1] == 's')
+	    break;
+	}
+	if (s) {
+	  fileName = new GString(urlCommand->getCString(),
+				 s - urlCommand->getCString());
+	  fileName->append(((LinkURI *)action)->getURI());
+	  fileName->append(s+2);
+	} else {
+	  fileName = urlCommand->copy();
+	}
+#ifdef VMS
+	fileName->insert(0, "spawn/nowait ");
+#elif defined(__EMX__)
+	fileName->insert(0, "start /min /n ");
+#else
+	fileName->append(" &");
+#endif
+	system(fileName->getCString());
+	delete fileName;
+      } else {
+	fprintf(errFile, "URI: %s\n",
+		((LinkURI *)action)->getURI()->getCString());
+      }
+      break;
+
+    // unknown action type
+    case actionUnknown:
+      error(-1, "Unknown link action type: '%s'",
+	    ((LinkUnknown *)action)->getAction()->getCString());
+      break;
     }
   }
 }
 
+static void mouseMoveCbk(LTKWidget *widget, int widgetNum, int mx, int my) {
+  double x, y;
+  LinkAction *action;
+  char *s;
+
+  if (!doc)
+    return;
+  out->cvtDevToUser(mx, my, &x, &y);
+  if ((action = doc->findLink(x, y))) {
+    if (action != linkAction) {
+      if (!linkAction)
+	win->setCursor(XC_hand2);
+      linkAction = action;
+      s = NULL;
+      switch (linkAction->getKind()) {
+      case actionGoTo:
+	s = "[internal link]";
+	break;
+      case actionGoToR:
+	s = ((LinkGoToR *)linkAction)->getFileName()->getCString();
+	break;
+      case actionLaunch:
+	s = ((LinkLaunch *)linkAction)->getFileName()->getCString();
+	break;
+      case actionURI:
+	s = ((LinkURI *)action)->getURI()->getCString();
+	break;
+      case actionUnknown:
+	s = "[unknown link]";
+	break;
+      }
+      linkLabel->setText(s);
+    }
+  } else {
+    if (linkAction) {
+      linkAction = NULL;
+      win->setDefaultCursor();
+      linkLabel->setText(NULL);
+    }
+  }
+}
+
+static void mouseDragCbk(LTKWidget *widget, int widgetNum,
+			 int mx, int my, int button) {
+  int x, y;
+  int xMin, yMin, xMax, yMax;
+
+  // button 1: select
+  if (button == 1) {
+
+    // clip mouse coords
+    x = mx;
+    if (x < 0)
+      x = 0;
+    else if (x >= canvas->getRealWidth())
+      x = canvas->getRealWidth() - 1;
+    y = my;
+    if (y < 0)
+      y = 0;
+    else if (y >= canvas->getRealHeight())
+      y = canvas->getRealHeight() - 1;
+
+    // move appropriate edges of selection
+    if (lastDragLeft) {
+      if (x < selectXMax) {
+	xMin = x;
+	xMax = selectXMax;
+      } else {
+	xMin = selectXMax;
+	xMax = x;
+	lastDragLeft = gFalse;
+      }      
+    } else {
+      if (x > selectXMin) {
+	xMin = selectXMin;
+	xMax = x;
+      } else {
+	xMin = x;
+	xMax = selectXMin;
+	lastDragLeft = gTrue;
+      }
+    }
+    if (lastDragTop) {
+      if (y < selectYMax) {
+	yMin = y;
+	yMax = selectYMax;
+      } else {
+	yMin = selectYMax;
+	yMax = y;
+	lastDragTop = gFalse;
+      }
+    } else {
+      if (y > selectYMin) {
+	yMin = selectYMin;
+	yMax = y;
+      } else {
+	yMin = y;
+	yMax = selectYMin;
+	lastDragTop = gTrue;
+      }
+    }
+
+    // redraw the selection
+    setSelection(xMin, yMin, xMax, yMax);
+
+  // button 2: pan
+  } else if (button == 2) {
+    mx -= hScrollbar->getPos();
+    my -= vScrollbar->getPos();
+    hScrollbar->setPos(hScrollbar->getPos() - (mx - panMX),
+		       canvas->getWidth());
+    vScrollbar->setPos(vScrollbar->getPos() - (my - panMY),
+		       canvas->getHeight());
+    canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+    panMX = mx;
+    panMY = my;
+  }
+}
+
+//------------------------------------------------------------------------
+// button callbacks
+//------------------------------------------------------------------------
+
 static void nextPageCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
   if (page < doc->getNumPages()) {
     vScrollbar->setPos(0, canvas->getHeight());
     canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
@@ -714,6 +1105,8 @@ static void nextPageCbk(LTKWidget *button, int n, GBool on) {
 static void nextTenPageCbk(LTKWidget *button, int n, GBool on) {
   int pg;
 
+  if (!doc)
+    return;
   if (page < doc->getNumPages()) {
     vScrollbar->setPos(0, canvas->getHeight());
     canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
@@ -726,6 +1119,8 @@ static void nextTenPageCbk(LTKWidget *button, int n, GBool on) {
 }
 
 static void prevPageCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
   if (page > 1) {
     vScrollbar->setPos(0, canvas->getHeight());
     canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
@@ -738,6 +1133,8 @@ static void prevPageCbk(LTKWidget *button, int n, GBool on) {
 static void prevTenPageCbk(LTKWidget *button, int n, GBool on) {
   int pg;
 
+  if (!doc)
+    return;
   if (page > 1) {
     vScrollbar->setPos(0, canvas->getHeight());
     canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
@@ -753,9 +1150,12 @@ static void pageNumCbk(LTKWidget *textIn, int n, GString *text) {
   int page1;
   char s[20];
 
+  if (!doc)
+    return;
   page1 = atoi(text->getCString());
   if (page1 >= 1 && page1 <= doc->getNumPages()) {
-    displayPage(page1, zoom, rotate);
+    if (page1 != page)
+      displayPage(page1, zoom, rotate);
   } else {
     XBell(display, 0);
     sprintf(s, "%d", page);
@@ -764,6 +1164,8 @@ static void pageNumCbk(LTKWidget *textIn, int n, GString *text) {
 }
 
 static void zoomInCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
   if (zoom < maxZoom)
     displayPage(page, zoom + 1, rotate);
   else
@@ -771,32 +1173,307 @@ static void zoomInCbk(LTKWidget *button, int n, GBool on) {
 }
 
 static void zoomOutCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
   if (zoom > minZoom)
     displayPage(page, zoom - 1, rotate);
   else
     XBell(display, 0);
 }
 
-static void rotateCWCbk(LTKWidget *button, int n, GBool on) {
-  int r;
-
-  r = (rotate == 270) ? 0 : rotate + 90;
-  displayPage(page, zoom, r);
-}
-
-static void rotateCCWCbk(LTKWidget *button, int n, GBool on) {
-  int r;
-
-  r = (rotate == 0) ? 270 : rotate - 90;
-  displayPage(page, zoom, r);
-}
-
 static void postScriptCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
+  mapPSDialog();
+}
+
+static void aboutCbk(LTKWidget *button, int n, GBool on) {
+  mapAboutWin();
+}
+
+static void quitCbk(LTKWidget *button, int n, GBool on) {
+  quit = gTrue;
+}
+
+//------------------------------------------------------------------------
+// scrollbar callbacks
+//------------------------------------------------------------------------
+
+static void scrollVertCbk(LTKWidget *scrollbar, int n, int val) {
+  canvas->scroll(hScrollbar->getPos(), val);
+  XSync(display, False);
+}
+
+static void scrollHorizCbk(LTKWidget *scrollbar, int n, int val) {
+  canvas->scroll(val, vScrollbar->getPos());
+  XSync(display, False);
+}
+
+//------------------------------------------------------------------------
+// misc callbacks
+//------------------------------------------------------------------------
+
+static void layoutCbk(LTKWindow *win1) {
+  hScrollbar->setLimits(0, canvas->getRealWidth() - 1);
+  hScrollbar->setPos(hScrollbar->getPos(), canvas->getWidth());
+  hScrollbar->setScrollDelta(16);
+  vScrollbar->setLimits(0, canvas->getRealHeight() - 1);
+  vScrollbar->setPos(vScrollbar->getPos(), canvas->getHeight());
+  vScrollbar->setScrollDelta(16);
+  canvas->scroll(hScrollbar->getPos(), vScrollbar->getPos());
+}
+
+static void propChangeCbk(LTKWindow *win1, Atom atom) {
+  Window xwin;
+  char *cmd;
+  Atom type;
+  int format;
+  Gulong size, remain;
+  char *p;
+  GString *newFileName;
+  int newPage;
+
+  // get command
+  xwin = win1->getXWindow();
+  if (XGetWindowProperty(display, xwin, remoteAtom,
+			 0, remoteCmdLength/4, True, remoteAtom,
+			 &type, &format, &size, &remain,
+			 (Guchar **)&cmd) != Success)
+    return;
+  if (size == 0)
+    return;
+
+  // raise window
+  if (cmd[0] == 'D' || cmd[0] == 'r'){
+    win->raise();
+    XFlush(display);
+  }
+
+  // display file / page
+  if (cmd[0] == 'd' || cmd[0] == 'D') {
+    p = cmd + 2;
+    newPage = atoi(p);
+    if (!(p = strchr(p, ' ')))
+      return;
+    newFileName = new GString(p + 1);
+    XFree(cmd);
+    if (!doc || newFileName->cmp(doc->getFileName())) {
+      if (!loadFile(newFileName))
+	return;
+    } else {
+      delete newFileName;
+    }
+    if (newPage != page && newPage >= 1 && newPage <= doc->getNumPages())
+      displayPage(newPage, zoom, rotate);
+
+  // quit
+  } else if (cmd[0] == 'q') {
+    quit = gTrue;
+  }
+}
+
+//------------------------------------------------------------------------
+// selection
+//------------------------------------------------------------------------
+
+static void setSelection(int newXMin, int newYMin, int newXMax, int newYMax) {
+  int x, y;
+  GBool needRedraw, needScroll;
+  GBool moveLeft, moveRight, moveTop, moveBottom;
+
+  // erase old selection on canvas pixmap
+  needRedraw = gFalse;
+  if (selectXMin < selectXMax && selectYMin < selectYMax) {
+    XFillRectangle(canvas->getDisplay(), canvas->getPixmap(),
+		   selectGC, selectXMin, selectYMin,
+		   selectXMax - selectXMin, selectYMax - selectYMin);
+    needRedraw = gTrue;
+  }
+
+  // draw new selection on canvas pixmap
+  if (newXMin < newXMax && newYMin < newYMax) {
+    XFillRectangle(canvas->getDisplay(), canvas->getPixmap(),
+		   selectGC, newXMin, newYMin,
+		   newXMax - newXMin, newYMax - newYMin);
+    needRedraw = gTrue;
+  }
+
+  // check which edges moved
+  moveLeft = newXMin != selectXMin;
+  moveTop = newYMin != selectYMin;
+  moveRight = newXMax != selectXMax;
+  moveBottom = newYMax != selectYMax;
+
+  // redraw currently visible part of canvas
+  if (needRedraw) {
+    if (moveLeft) {
+      canvas->redrawRect((newXMin < selectXMin) ? newXMin : selectXMin,
+			 (newYMin < selectYMin) ? newYMin : selectYMin,
+			 (newXMin > selectXMin) ? newXMin : selectXMin,
+			 (newYMax > selectYMax) ? newYMax : selectYMax);
+    }
+    if (moveRight) {
+      canvas->redrawRect((newXMax < selectXMax) ? newXMax : selectXMax,
+			 (newYMin < selectYMin) ? newYMin : selectYMin,
+			 (newXMax > selectXMax) ? newXMax : selectXMax,
+			 (newYMax > selectYMax) ? newYMax : selectYMax);
+    }
+    if (moveTop) {
+      canvas->redrawRect((newXMin < selectXMin) ? newXMin : selectXMin,
+			 (newYMin < selectYMin) ? newYMin : selectYMin,
+			 (newXMax > selectXMax) ? newXMax : selectXMax,
+			 (newYMin > selectYMin) ? newYMin : selectYMin);
+    }
+    if (moveBottom) {
+      canvas->redrawRect((newXMin < selectXMin) ? newXMin : selectXMin,
+			 (newYMax < selectYMax) ? newYMax : selectYMax,
+			 (newXMax > selectXMax) ? newXMax : selectXMax,
+			 (newYMax > selectYMax) ? newYMax : selectYMax);
+    }
+  }
+
+  // switch to new selection coords
+  selectXMin = newXMin;
+  selectXMax = newXMax;
+  selectYMin = newYMin;
+  selectYMax = newYMax;
+
+  // scroll canvas if necessary
+  needScroll = gFalse;
+  x = hScrollbar->getPos();
+  if (moveLeft &&
+      (selectXMin < x || selectXMin >= x + canvas->getWidth())) {
+    x = selectXMin;
+    needScroll = gTrue;
+  } else if (moveRight &&
+	     (selectXMax < x || selectXMax >= x + canvas->getWidth())) {
+    x = selectXMax - canvas->getWidth();
+    needScroll = gTrue;
+  }
+  y = vScrollbar->getPos();
+  if (moveTop &&
+      (selectYMin < y || selectYMin >= y + canvas->getHeight())) {
+    y = selectYMin;
+    needScroll = gTrue;
+  } else if (moveBottom &&
+	     (selectYMax < y || selectYMax >= y + canvas->getHeight())) {
+    y = selectYMax - canvas->getHeight();
+    needScroll = gTrue;
+  }
+  if (needScroll) {
+    hScrollbar->setPos(x, canvas->getWidth());
+    vScrollbar->setPos(y, canvas->getHeight());
+    canvas->scroll(x, y);
+  }
+}
+
+//------------------------------------------------------------------------
+// "Open" dialog
+//------------------------------------------------------------------------
+
+static void mapOpenDialog() {
+  openDialog = makeOpenDialog(app);
+  ((LTKFileReq *)openDialog->findWidget("fileReq"))->setDir(fileReqDir);
+  openDialog->layoutDialog(win, -1, -1);
+  openDialog->map();
+}
+
+static void openButtonCbk(LTKWidget *button, int n, GBool on) {
+  LTKFileReq *fileReq;
+  GString *sel;
+
+  sel = NULL;
+  if (n == 1) {
+    fileReq = (LTKFileReq *)openDialog->findWidget("fileReq");
+    if ((sel = fileReq->getSelection()))
+      openSelectCbk(fileReq, 0, sel);
+    else
+      XBell(display, 0);
+  }
+  if (openDialog) {
+    if (sel) {
+      delete fileReqDir;
+      fileReqDir = ((LTKFileReq *)openDialog->findWidget("fileReq"))->getDir();
+    }
+    delete openDialog;
+    openDialog = NULL;
+  }
+}
+
+static void openSelectCbk(LTKWidget *widget, int n, GString *name) {
+  GString *name1;
+
+  name1 = name->copy();
+  if (openDialog) {
+    delete fileReqDir;
+    fileReqDir = ((LTKFileReq *)openDialog->findWidget("fileReq"))->getDir();
+    delete openDialog;
+    openDialog = NULL;
+  }
+  if (loadFile(name1))
+    displayPage(1, zoom, rotate);
+}
+
+//------------------------------------------------------------------------
+// "Save PDF" dialog
+//------------------------------------------------------------------------
+
+static void mapSaveDialog() {
+  saveDialog = makeSaveDialog(app);
+  ((LTKFileReq *)saveDialog->findWidget("fileReq"))->setDir(fileReqDir);
+  saveDialog->layoutDialog(win, -1, -1);
+  saveDialog->map();
+}
+
+static void saveButtonCbk(LTKWidget *button, int n, GBool on) {
+  LTKFileReq *fileReq;
+  GString *sel;
+
+  if (!doc)
+    return;
+  sel = NULL;
+  if (n == 1) {
+    fileReq = (LTKFileReq *)saveDialog->findWidget("fileReq");
+    if ((sel = fileReq->getSelection()))
+      saveSelectCbk(fileReq, 0, sel);
+    else
+      XBell(display, 0);
+  }
+  if (saveDialog) {
+    if (sel) {
+      delete fileReqDir;
+      fileReqDir = ((LTKFileReq *)saveDialog->findWidget("fileReq"))->getDir();
+    }
+    delete saveDialog;
+    saveDialog = NULL;
+  }
+}
+
+static void saveSelectCbk(LTKWidget *widget, int n, GString *name) {
+  GString *name1;
+
+  name1 = name->copy();
+  if (saveDialog) {
+    delete fileReqDir;
+    fileReqDir = ((LTKFileReq *)saveDialog->findWidget("fileReq"))->getDir();
+    delete saveDialog;
+    saveDialog = NULL;
+  }
+  win->setBusyCursor(gTrue);
+  doc->saveAs(name1);
+  delete name1;
+  win->setBusyCursor(gFalse);
+}
+
+//------------------------------------------------------------------------
+// "PostScript" dialog
+//------------------------------------------------------------------------
+
+static void mapPSDialog() {
   LTKTextIn *widget;
   char s[20];
 
   psDialog = makePostScriptDialog(app);
-  psDialog->setKeyCbk(&psKeyPressCbk);
   sprintf(s, "%d", psFirstPage);
   widget = (LTKTextIn *)psDialog->findWidget("firstPage");
   widget->setText(s);
@@ -813,15 +1490,18 @@ static void psButtonCbk(LTKWidget *button, int n, GBool on) {
   PSOutputDev *psOut;
   LTKTextIn *widget;
 
+  if (!doc)
+    return;
+
   // "Ok" button
   if (n == 1) {
     // extract params and close the dialog
     widget = (LTKTextIn *)psDialog->findWidget("firstPage");
-    psFirstPage = atoi(widget->getText());
+    psFirstPage = atoi(widget->getText()->getCString());
     if (psFirstPage < 1)
       psFirstPage = 1;
     widget = (LTKTextIn *)psDialog->findWidget("lastPage");
-    psLastPage = atoi(widget->getText());
+    psLastPage = atoi(widget->getText()->getCString());
     if (psLastPage < psFirstPage)
       psLastPage = psFirstPage;
     else if (psLastPage > doc->getNumPages())
@@ -829,15 +1509,17 @@ static void psButtonCbk(LTKWidget *button, int n, GBool on) {
     widget = (LTKTextIn *)psDialog->findWidget("fileName");
     if (psFileName)
       delete psFileName;
-    psFileName = new GString(widget->getText());
+    psFileName = widget->getText()->copy();
+    if (!(psFileName->getChar(0) == '|' ||
+	  psFileName->cmp("-") == 0))
+      makePathAbsolute(psFileName);
 
     // do the PostScript output
-    psDialog->setCursor(XC_watch);
-    win->setCursor(XC_watch);
-    XFlush(display);
+    psDialog->setBusyCursor(gTrue);
+    win->setBusyCursor(gTrue);
     if (doc->okToPrint()) {
       psOut = new PSOutputDev(psFileName->getCString(), doc->getCatalog(),
-			      psFirstPage, psLastPage);
+			      psFirstPage, psLastPage, gTrue);
       if (psOut->isOk()) {
 	doc->displayPages(psOut, psFirstPage, psLastPage,
 			  zoomDPI[zoom - minZoom], rotate);
@@ -846,7 +1528,7 @@ static void psButtonCbk(LTKWidget *button, int n, GBool on) {
     }
 
     delete psDialog;
-    win->setCursor(XC_top_left_arrow);
+    win->setBusyCursor(gFalse);
 
   // "Cancel" button
   } else {
@@ -854,17 +1536,15 @@ static void psButtonCbk(LTKWidget *button, int n, GBool on) {
   }
 }
 
-static void psKeyPressCbk(LTKWindow *win, KeySym key, char *s, int n) {
-  if (n > 0 && (s[0] == '\n' || s[0] == '\r'))
-    psButtonCbk(NULL, 1, gTrue);
-}
+//------------------------------------------------------------------------
+// "About" window
+//------------------------------------------------------------------------
 
-static void aboutCbk(LTKWidget *button, int n, GBool on) {
+static void mapAboutWin() {
   if (aboutWin) {
-    XMapRaised(display, aboutWin->getXWindow());
+    aboutWin->raise();
   } else {
     aboutWin = makeAboutWindow(app);
-    aboutWin->setKeyCbk(&aboutKeyPressCbk);
     aboutWin->layout(-1, -1, -1, -1);
     aboutWin->map();
   }
@@ -875,21 +1555,146 @@ static void closeAboutCbk(LTKWidget *button, int n, GBool on) {
   aboutWin = NULL;
 }
 
-static void aboutKeyPressCbk(LTKWindow *win, KeySym key, char *s, int n) {
-  if (n > 0 && (s[0] == '\n' || s[0] == '\r'))
-    closeAboutCbk(NULL, 0, gTrue);
+//------------------------------------------------------------------------
+// "Find" window
+//------------------------------------------------------------------------
+
+static void findCbk(LTKWidget *button, int n, GBool on) {
+  if (!doc)
+    return;
+  mapFindWin();
 }
 
-static void quitCbk(LTKWidget *button, int n, GBool on) {
-  quit = gTrue;
+static void mapFindWin() {
+  if (findWin) {
+    findWin->raise();
+  } else {
+    findWin = makeFindWindow(app);
+    findWin->layout(-1, -1, -1, -1);
+    findWin->map();
+  }
 }
 
-static void scrollVertCbk(LTKWidget *scrollbar, int n, int val) {
-  canvas->scroll(hScrollbar->getPos(), val);
-  XSync(display, False);
+static void findButtonCbk(LTKWidget *button, int n, GBool on) {
+  LTKTextIn *textIn;
+
+  if (!doc)
+    return;
+  if (n == 1) {
+    textIn = (LTKTextIn *)findWin->findWidget("text");
+    doFind(textIn->getText()->getCString());
+  } else {
+    delete findWin;
+    findWin = NULL;
+  }
 }
 
-static void scrollHorizCbk(LTKWidget *scrollbar, int n, int val) {
-  canvas->scroll(val, vScrollbar->getPos());
-  XSync(display, False);
+static void doFind(char *s) {
+  TextOutputDev *textOut;
+  int xMin, yMin, xMax, yMax;
+  double xMin1, yMin1, xMax1, yMax1;
+  int pg;
+  GBool top;
+  GString *s1;
+
+  // check for zero-length string
+  if (!s[0]) {
+    XBell(display, 0);
+    return;
+  }
+
+  // set cursors to watch
+  win->setBusyCursor(gTrue);
+  findWin->setBusyCursor(gTrue);
+
+  // search current page starting at current selection or top of page
+  xMin = yMin = xMax = yMax = 0;
+  if (selectXMin < selectXMax && selectYMin < selectYMax) {
+    xMin = selectXMax;
+    yMin = (selectYMin + selectYMax) / 2;
+    top = gFalse;
+  } else {
+    top = gTrue;
+  }
+  if (out->findText(s, top, gTrue, &xMin, &yMin, &xMax, &yMax))
+    goto found;
+
+  // search following pages
+  textOut = new TextOutputDev(NULL, gFalse);
+  if (!textOut->isOk()) {
+    delete textOut;
+    goto done;
+  }
+  for (pg = page+1; pg <= doc->getNumPages(); ++pg) {
+    doc->displayPage(textOut, pg, 72, 0, gFalse);
+    if (textOut->findText(s, gTrue, gTrue, &xMin1, &yMin1, &xMax1, &yMax1))
+      goto foundPage;
+  }
+
+  // search previous pages
+  for (pg = 1; pg < page; ++pg) {
+    doc->displayPage(textOut, pg, 72, 0, gFalse);
+    if (textOut->findText(s, gTrue, gTrue, &xMin1, &yMin1, &xMax1, &yMax1))
+      goto foundPage;
+  }
+  delete textOut;
+
+  // search current page ending at current selection
+  if (selectXMin < selectXMax && selectYMin < selectYMax) {
+    xMax = selectXMin;
+    yMax = (selectYMin + selectYMax) / 2;
+    if (out->findText(s, gTrue, gFalse, &xMin, &yMin, &xMax, &yMax))
+      goto found;
+  }
+
+  // not found
+  XBell(display, 0);
+  goto done;
+
+  // found on a different page
+ foundPage:
+  delete textOut;
+  displayPage(pg, zoom, rotate);
+  if (!out->findText(s, gTrue, gTrue, &xMin, &yMin, &xMax, &yMax))
+    goto done; // this can happen if coalescing is bad
+
+  // found: change the selection
+ found:
+  setSelection(xMin, yMin, xMax, yMax);
+#ifndef NO_TEXT_SELECT
+  if (doc->okToCopy()) {
+    s1 = out->getText(selectXMin, selectYMin, selectXMax, selectYMax);
+    win->setSelection(NULL, s1);
+  }
+#endif
+
+ done:
+  // reset cursors to normal
+  win->setBusyCursor(gFalse);
+  findWin->setBusyCursor(gFalse);
+}
+
+//------------------------------------------------------------------------
+// app kill callback
+//------------------------------------------------------------------------
+
+static void killCbk(LTKWindow *win1) {
+  if (win1 == win) {
+    quit = gTrue;
+  } else if (win1 == aboutWin) {
+    delete aboutWin;
+    aboutWin = NULL;
+  } else if (win1 == psDialog) {
+    delete psDialog;
+    psDialog = NULL;
+  } else if (win1 == openDialog) {
+    delete openDialog;
+    openDialog = NULL;
+  } else if (win1 == saveDialog) {
+    delete saveDialog;
+    saveDialog = NULL;
+  } else if (win1 == findWin) {
+    delete findWin;
+    findWin = NULL;
+  }
 }

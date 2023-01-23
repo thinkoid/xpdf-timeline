@@ -29,16 +29,6 @@
 				//   to look for 'startxref'
 
 //------------------------------------------------------------------------
-// Permission bits
-//------------------------------------------------------------------------
-
-#define permPrint    (1<<2)
-#define permChange   (1<<3)
-#define permCopy     (1<<4)
-#define permNotes    (1<<5)
-#define defPermFlags 0xfffc
-
-//------------------------------------------------------------------------
 // The global xref table
 //------------------------------------------------------------------------
 
@@ -54,25 +44,53 @@ XRef::XRef(FileStream *str) {
   int i;
 
   ok = gTrue;
+  size = 0;
+  entries = NULL;
 
   // get rid of old xref (otherwise it will try to fetch the Root object
   // in the new document, using the old xref)
   oldXref = xref;
   xref = NULL;
 
-  entries = NULL;
+  // read the trailer
   file = str->getFile();
   start = str->getStart();
   pos = readTrailer(str);
+
+  // if there was a problem with the trailer,
+  // try to reconstruct the xref table
   if (pos == 0) {
-    ok = gFalse;
-    return;
+    if (!(ok = constructXRef(str))) {
+      xref = oldXref;
+      return;
+    }
+
+  // trailer is ok - read the xref table
+  } else {
+    entries = (XRefEntry *)gmalloc(size * sizeof(XRefEntry));
+    for (i = 0; i < size; ++i) {
+      entries[i].offset = -1;
+      entries[i].used = gFalse;
+    }
+    while (readXRef(str, &pos)) ;
+
+    // if there was a problem with the xref table,
+    // try to reconstruct it
+    if (!ok) {
+      gfree(entries);
+      size = 0;
+      entries = NULL;
+      if (!(ok = constructXRef(str))) {
+	xref = oldXref;
+	return;
+      }
+    }
   }
-  entries = (XRefEntry *)gmalloc(size * sizeof(XRefEntry));
-  for (i = 0; i < size; ++i)
-    entries[i].offset = -1;
-  while (readXRef(str, &pos)) ;
+
+  // set up new xref table
   xref = this;
+
+  // check for encryption
   if (checkEncrypted()) {
     ok = gFalse;
     xref = oldXref;
@@ -116,8 +134,8 @@ int XRef::readTrailer(FileStream *str) {
   pos = atoi(p);
 
   // find trailer dict by looking after first xref table
-  //~ there should be a better way to do this -- I need to look
-  //~ at the PDF 1.2 docs
+  // (NB: we can't just use the trailer dict at the end of the file --
+  // this won't work for linearized files.)
   str->setPos(start + pos);
   for (i = 0; i < 4; ++i)
     buf[i] = str->getChar();
@@ -140,6 +158,8 @@ int XRef::readTrailer(FileStream *str) {
     n = atoi(p);
     while ('0' <= *p && *p <= '9') ++p;
     while (isspace(*p)) ++p;
+    if (p == buf)
+      return 0;
     pos1 += (p - buf) + n * 20;
   }
   pos1 += 7;
@@ -149,13 +169,13 @@ int XRef::readTrailer(FileStream *str) {
   parser = new Parser(new Lexer(new FileStream(file, start + pos1, -1, &obj)));
   parser->getObj(&trailerDict);
   if (trailerDict.isDict()) {
-    trailerDict.dictLookup("Size", &obj);
+    trailerDict.dictLookupNF("Size", &obj);
     if (obj.isInt())
       size = obj.getInt();
     else
       pos = 0;
     obj.free();
-    trailerDict.dictLookup("Root", &obj);
+    trailerDict.dictLookupNF("Root", &obj);
     if (obj.isRef()) {
       rootNum = obj.getRefNum();
       rootGen = obj.getRefGen();
@@ -176,70 +196,78 @@ int XRef::readTrailer(FileStream *str) {
 GBool XRef::readXRef(FileStream *str, int *pos) {
   Parser *parser;
   Object obj, obj2;
-  int first, n, i;
+  char s[20];
   GBool more;
+  int first, n, i, j;
+  int c;
 
-  // make a parser
-  obj.initNull();
-  parser = new Parser(new Lexer(
-    new FileStream(file, start + *pos, -1, &obj)));
+  // seek to xref in stream
+  str->setPos(start + *pos);
 
   // make sure it's an xref table
-  parser->getObj(&obj);
-  if (!obj.isCmd("xref"))
-    goto err;
-  obj.free();
+  while ((c = str->getChar()) != EOF && isspace(c)) ;
+  s[0] = (char)c;
+  s[1] = (char)str->getChar();
+  s[2] = (char)str->getChar();
+  s[3] = (char)str->getChar();
+  if (!(s[0] == 'x' && s[1] == 'r' && s[2] == 'e' && s[3] == 'f'))
+    goto err2;
 
   // read xref
-  parser->getObj(&obj);
-  while (!obj.isCmd("trailer")) {
-    if (!obj.isInt())
-      goto err;
-    first = obj.getInt();
-    obj.free();
-    parser->getObj(&obj);
-    if (!obj.isInt())
-      goto err;
-    n = obj.getInt();
-    obj.free();
+  while (1) {
+    while ((c = str->lookChar()) != EOF && isspace(c))
+      str->getChar();
+    if (c == 't')
+      break;
+    for (i = 0; (c = str->getChar()) != EOF && isdigit(c) && i < 20; ++i)
+      s[i] = (char)c;
+    if (i == 0)
+      goto err2;
+    s[i] = '\0';
+    first = atoi(s);
+    while ((c = str->lookChar()) != EOF && isspace(c))
+      str->getChar();
+    for (i = 0; (c = str->getChar()) != EOF && isdigit(c) && i < 20; ++i)
+      s[i] = (char)c;
+    if (i == 0)
+      goto err2;
+    s[i] = '\0';
+    n = atoi(s);
+    while ((c = str->lookChar()) != EOF && isspace(c))
+      str->getChar();
     for (i = first; i < first + n; ++i) {
+      for (j = 0; j < 20; ++j) {
+	if ((c = str->getChar()) == EOF)
+	  goto err2;
+	s[j] = (char)c;
+      }
       if (entries[i].offset < 0) {
-	parser->getObj(&obj);
-	if (!obj.isInt())
-	  goto err;
-	entries[i].offset = obj.getInt();
-	obj.free();
-	parser->getObj(&obj);
-	if (!obj.isInt())
-	  goto err;
-	entries[i].gen = obj.getInt();
-	obj.free();
-	parser->getObj(&obj);
-	if (obj.isCmd("n"))
+	s[10] = '\0';
+	entries[i].offset = atoi(s);
+	s[16] = '\0';
+	entries[i].gen = atoi(&s[11]);
+	if (s[17] == 'n')
 	  entries[i].used = gTrue;
-	else if (obj.isCmd("f"))
+	else if (s[17] == 'f')
 	  entries[i].used = gFalse;
 	else
-	  goto err;
-	obj.free();
-      } else {
-	parser->getObj(&obj);
-	obj.free();
-	parser->getObj(&obj);
-	obj.free();
-	parser->getObj(&obj);
-	obj.free();
+	  goto err2;
       }
     }
-    parser->getObj(&obj);
   }
-  obj.free();
 
-  // read prev pointer
+  // read prev pointer from trailer dictionary
+  obj.initNull();
+  parser = new Parser(new Lexer(
+    new FileStream(file, str->getPos(), -1, &obj)));
+  parser->getObj(&obj);
+  if (!obj.isCmd("trailer"))
+    goto err1;
+  obj.free();
   parser->getObj(&obj);
   if (!obj.isDict())
-    goto err;
-  obj.getDict()->lookup("Prev", &obj2);
+    goto err1;
+  obj.getDict()->lookupNF("Prev", &obj2);
   if (obj2.isInt()) {
     *pos = obj2.getInt();
     more = gTrue;
@@ -252,10 +280,102 @@ GBool XRef::readXRef(FileStream *str, int *pos) {
   delete parser;
   return more;
 
- err:
-  ok = gFalse;
+ err1:
   obj.free();
-  delete parser;
+ err2:
+  ok = gFalse;
+  return gFalse;
+}
+
+// Attempt to construct an xref table for a damaged file.
+GBool XRef::constructXRef(FileStream *str) {
+  Parser *parser;
+  Object obj;
+  char buf[256];
+  int pos;
+  int num, gen;
+  int newSize;
+  char *p;
+  int i;
+  GBool gotRoot;
+
+  error(0, "PDF file is damaged - attempting to reconstruct xref table...");
+  gotRoot = gFalse;
+
+  str->reset();
+  while (1) {
+    pos = str->getPos();
+    if (!str->getLine(buf, 256))
+      break;
+    p = buf;
+
+    // got trailer dictionary
+    if (!strncmp(p, "trailer", 7)) {
+      obj.initNull();
+      parser = new Parser(new Lexer(
+		 new FileStream(file, start + pos + 8, -1, &obj)));
+      if (!trailerDict.isNone())
+	trailerDict.free();
+      parser->getObj(&trailerDict);
+      if (trailerDict.isDict()) {
+	trailerDict.dictLookupNF("Root", &obj);
+	if (obj.isRef()) {
+	  rootNum = obj.getRefNum();
+	  rootGen = obj.getRefGen();
+	  gotRoot = gTrue;
+	}
+	obj.free();
+      } else {
+	pos = 0;
+      }
+      delete parser;
+
+    // look for object
+    } else if (isdigit(*p)) {
+      num = atoi(p);
+      do {
+	++p;
+      } while (*p && isdigit(*p));
+      if (isspace(*p)) {
+	do {
+	  ++p;
+	} while (*p && isspace(*p));
+	if (isdigit(*p)) {
+	  gen = atoi(p);
+	  do {
+	    ++p;
+	  } while (*p && isdigit(*p));
+	  if (isspace(*p)) {
+	    do {
+	      ++p;
+	    } while (*p && isspace(*p));
+	    if (!strncmp(p, "obj", 3)) {
+	      if (num >= size) {
+		newSize = (num + 1 + 255) & ~255;
+		entries = (XRefEntry *)
+		            grealloc(entries, newSize * sizeof(XRefEntry));
+		for (i = size; i < newSize; ++i) {
+		  entries[i].offset = -1;
+		  entries[i].used = gFalse;
+		}
+		size = newSize;
+	      }
+	      if (!entries[num].used || gen >= entries[num].gen) {
+		entries[num].offset = pos - start;
+		entries[num].gen = gen;
+		entries[num].used = gTrue;
+	      }
+	    }
+	  }
+	}
+      }
+    }
+  }
+
+  if (gotRoot)
+    return gTrue;
+
+  error(-1, "Couldn't find trailer dictionary");
   return gFalse;
 }
 
@@ -278,10 +398,20 @@ GBool XRef::okToPrint() {
   return gTrue;
 }
 
+GBool XRef::okToCopy() {
+  return gTrue;
+}
+
 Object *XRef::fetch(int num, int gen, Object *obj) {
   XRefEntry *e;
   Parser *parser;
   Object obj1, obj2, obj3;
+
+  // check for bogus ref - this can happen in corrupted PDF files
+  if (num < 0 || num >= size) {
+    obj->initNull();
+    return obj;
+  }
 
   e = &entries[num];
   if (e->gen == gen && e->offset >= 0) {

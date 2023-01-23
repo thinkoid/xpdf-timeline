@@ -24,6 +24,7 @@
 #include "GfxFont.h"
 #include "Error.h"
 #include "Params.h"
+#include "TextOutputDev.h"
 #include "XOutputDev.h"
 
 #include "XOutputFontInfo.h"
@@ -38,10 +39,12 @@
 				//   drawing Bezier curves
 
 //------------------------------------------------------------------------
-// Command line options
+// Parameters
 //------------------------------------------------------------------------
 
-int rgbCubeSize = defaultRGBCube;
+GBool installCmap;
+
+int rgbCubeSize;
 
 //------------------------------------------------------------------------
 // Font map
@@ -54,33 +57,47 @@ struct FontMapEntry {
 };
 
 static FontMapEntry fontMap[] = {
-  {"Courier",               "-*-courier-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Courier",
+   "-*-courier-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Courier-Bold",          "-*-courier-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Courier-Bold",
+   "-*-courier-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Courier-BoldOblique",   "-*-courier-bold-o-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Courier-BoldOblique",
+   "-*-courier-bold-o-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Courier-Oblique",       "-*-courier-medium-o-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Courier-Oblique",
+   "-*-courier-medium-o-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Helvetica",             "-*-helvetica-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Helvetica",
+   "-*-helvetica-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Helvetica-Bold",        "-*-helvetica-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Helvetica-Bold",
+   "-*-helvetica-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Helvetica-BoldOblique", "-*-helvetica-bold-o-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Helvetica-BoldOblique",
+   "-*-helvetica-bold-o-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Helvetica-Oblique",     "-*-helvetica-medium-o-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Helvetica-Oblique",
+   "-*-helvetica-medium-o-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Symbol",                "-*-symbol-medium-r-*-*-%s-*-*-*-*-*-adobe-fontspecific",
+  {"Symbol",
+   "-*-symbol-medium-r-normal-*-%s-*-*-*-*-*-adobe-fontspecific",
    &symbolEncoding},
-  {"Times-Bold",            "-*-times-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Times-Bold",
+   "-*-times-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Times-BoldItalic",      "-*-times-bold-i-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Times-BoldItalic",
+   "-*-times-bold-i-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Times-Italic",          "-*-times-medium-i-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Times-Italic",
+   "-*-times-medium-i-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"Times-Roman",           "-*-times-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",
+  {"Times-Roman",
+   "-*-times-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",
    &isoLatin1Encoding},
-  {"ZapfDingbats",          "-*-zapfdingbats-medium-r-*-*-%s-*-*-*-*-*-*-*",
+  {"ZapfDingbats",
+   "-*-zapfdingbats-medium-r-normal-*-%s-*-*-*-*-*-*-*",
    &zapfDingbatsEncoding},
   {NULL}
 };
@@ -98,22 +115,22 @@ struct FontSubst {
 
 // index: {symbolic:12, fixed:8, serif:4, sans-serif:0} + bold*2 + italic
 static FontSubst fontSubst[16] = {
-  {"-*-helvetica-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",       0.833},
-  {"-*-helvetica-medium-o-*-*-%s-*-*-*-*-*-iso8859-1",       0.833},
-  {"-*-helvetica-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",         0.889},
-  {"-*-helvetica-bold-o-*-*-%s-*-*-*-*-*-iso8859-1",         0.889},
-  {"-*-times-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",           0.788},
-  {"-*-times-medium-i-*-*-%s-*-*-*-*-*-iso8859-1",           0.722},
-  {"-*-times-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",             0.833},
-  {"-*-times-bold-i-*-*-%s-*-*-*-*-*-iso8859-1",             0.778},
-  {"-*-courier-medium-r-*-*-%s-*-*-*-*-*-iso8859-1",         0.600},
-  {"-*-courier-medium-o-*-*-%s-*-*-*-*-*-iso8859-1",         0.600},
-  {"-*-courier-bold-r-*-*-%s-*-*-*-*-*-iso8859-1",           0.600},
-  {"-*-courier-bold-o-*-*-%s-*-*-*-*-*-iso8859-1",           0.600},
-  {"-*-symbol-medium-r-*-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
-  {"-*-symbol-medium-r-*-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
-  {"-*-symbol-medium-r-*-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
-  {"-*-symbol-medium-r-*-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576}
+  {"-*-helvetica-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",       0.833},
+  {"-*-helvetica-medium-o-normal-*-%s-*-*-*-*-*-iso8859-1",       0.833},
+  {"-*-helvetica-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",         0.889},
+  {"-*-helvetica-bold-o-normal-*-%s-*-*-*-*-*-iso8859-1",         0.889},
+  {"-*-times-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",           0.788},
+  {"-*-times-medium-i-normal-*-%s-*-*-*-*-*-iso8859-1",           0.722},
+  {"-*-times-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",             0.833},
+  {"-*-times-bold-i-normal-*-%s-*-*-*-*-*-iso8859-1",             0.778},
+  {"-*-courier-medium-r-normal-*-%s-*-*-*-*-*-iso8859-1",         0.600},
+  {"-*-courier-medium-o-normal-*-%s-*-*-*-*-*-iso8859-1",         0.600},
+  {"-*-courier-bold-r-normal-*-%s-*-*-*-*-*-iso8859-1",           0.600},
+  {"-*-courier-bold-o-normal-*-%s-*-*-*-*-*-iso8859-1",           0.600},
+  {"-*-symbol-medium-r-normal-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
+  {"-*-symbol-medium-r-normal-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
+  {"-*-symbol-medium-r-normal-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576},
+  {"-*-symbol-medium-r-normal-*-%s-*-*-*-*-*-adobe-fontspecific", 0.576}
 };
 
 //------------------------------------------------------------------------
@@ -196,11 +213,12 @@ XOutputFont::XOutputFont(GfxFont *gfxFont, double m11, double m12,
   int startSize, sz;
   int index;
   int code, code2;
-  double w1, w2;
+  double w1, w2, v;
+  double *fm;
   char *charName;
 
   // init
-  tag = gfxFont->getTag()->copy();
+  id = gfxFont->getID();
   mat11 = m11;
   mat12 = m12;
   mat21 = m21;
@@ -211,12 +229,12 @@ XOutputFont::XOutputFont(GfxFont *gfxFont, double m11, double m12,
   // construct X font name
   pdfFont = gfxFont->getName();
   if (pdfFont) {
-    for (p = fontMap; p->pdfFont; ++p) {
+    for (p = userFontMap; p->pdfFont; ++p) {
       if (!pdfFont->cmp(p->pdfFont))
 	break;
     }
     if (!p->pdfFont) {
-      for (p = userFontMap; p->pdfFont; ++p) {
+      for (p = fontMap; p->pdfFont; ++p) {
 	if (!pdfFont->cmp(p->pdfFont))
 	  break;
       }
@@ -245,7 +263,30 @@ XOutputFont::XOutputFont(GfxFont *gfxFont, double m11, double m12,
       index += 2;
     if (gfxFont->isItalic())
       index += 1;
-    if (!gfxFont->isSymbolic()) {
+    if ((code = gfxFont->getCharCode("m")) >= 0)
+      w1 = gfxFont->getWidth(code);
+    else
+      w1 = 0;
+    w2 = fontSubst[index].mWidth;
+    if (gfxFont->getType() == fontType3) {
+      // This is a hack which makes it possible to substitute for some
+      // Type 3 fonts.  The problem is that it's impossible to know what
+      // the base coordinate system used in the font is without actually
+      // rendering the font.  This code tries to guess by looking at the
+      // width of the character 'm' (which breaks if the font is a
+      // subset that doesn't contain 'm').
+      if (w1 > 1.1 * w2 || w1 < 0.9 * w2) {
+	w1 /= w2;
+	mat11 *= w1;
+	mat12 *= w1;
+	mat21 *= w1;
+	mat22 *= w1;
+      }
+      fm = gfxFont->getFontMatrix();
+      v = (fm[0] == 0) ? 1 : (fm[3] / fm[0]);
+      mat12 *= v;
+      mat22 *= v;
+    } else if (!gfxFont->isSymbolic()) {
       w1 = gfxFont->getWidth('m');
       w2 = fontSubst[index].mWidth;
       if (w1 > 0.01 && w1 < 0.9 * w2) {
@@ -347,7 +388,6 @@ XOutputFont::XOutputFont(GfxFont *gfxFont, double m11, double m12,
 }
 
 XOutputFont::~XOutputFont() {
-  delete tag;
   if (xFont)
     XFreeFont(display, xFont);
 }
@@ -379,13 +419,13 @@ XOutputFont *XOutputFontCache::getFont(GfxFont *gfxFont,
   int i, j;
 
   // is it the most recently used font?
-  if (numFonts > 0 && fonts[0]->matches(gfxFont->getTag(),
+  if (numFonts > 0 && fonts[0]->matches(gfxFont->getID(),
 					m11, m12, m21, m22))
     return fonts[0];
 
   // is it in the cache?
   for (i = 1; i < numFonts; ++i) {
-    if (fonts[i]->matches(gfxFont->getTag(), m11, m12, m21, m22)) {
+    if (fonts[i]->matches(gfxFont->getID(), m11, m12, m21, m22)) {
       font = fonts[i];
       for (j = i; j > 0; --j)
 	fonts[j] = fonts[j-1];
@@ -420,8 +460,13 @@ XOutputFont *XOutputFontCache::getFont(GfxFont *gfxFont,
 //------------------------------------------------------------------------
 
 XOutputDev::XOutputDev(LTKWindow *win1) {
+  XVisualInfo visualTempl;
+  XVisualInfo *visualList;
+  int nVisuals;
+  Gulong mask;
   XGCValues gcValues;
   XColor xcolor;
+  XColor *xcolors;
   Colormap colormap;
   int r, g, b, n, m, i;
   GBool ok;
@@ -433,39 +478,114 @@ XOutputDev::XOutputDev(LTKWindow *win1) {
   screenNum = win->getScreenNum();
   pixmap = canvas->getPixmap();
 
-  // allocate a color cube
-  colormap = DefaultColormap(display, screenNum);
-  if (rgbCubeSize > maxRGBCube)
-    rgbCubeSize = maxRGBCube;
-  ok = gFalse;
-  for (numColors = rgbCubeSize; numColors >= 2; --numColors) {
-    ok = gTrue;
-    n = 0;
-    for (r = 0; r < numColors && ok; ++r) {
-      for (g = 0; g < numColors && ok; ++g) {
-	for (b = 0; b < numColors && ok; ++b) {
-	  xcolor.red = (r * 65535) / (numColors - 1);
-	  xcolor.green = (g * 65535) / (numColors - 1);
-	  xcolor.blue = (b * 65535) / (numColors - 1);
-	  if (XAllocColor(display, colormap, &xcolor))
-	    colors[n++] = xcolor.pixel;
-	  else
-	    ok = gFalse;
+  // check for TrueColor visual
+  visualList = XGetVisualInfo(display, 0, &visualTempl, &nVisuals);
+  trueColor = gFalse;
+  for (i = 0; i < nVisuals; ++i) {
+    if (visualList[i].visual == DefaultVisual(display, screenNum)) {
+      if (visualList[i].c_class == TrueColor) {
+	trueColor = gTrue;
+	mask = visualList[i].red_mask;
+	rShift = 0;
+	while (mask && !(mask & 1)) {
+	  ++rShift;
+	  mask >>= 1;
 	}
+	rMul = (int)mask;
+	mask = visualList[i].green_mask;
+	gShift = 0;
+	while (mask && !(mask & 1)) {
+	  ++gShift;
+	  mask >>= 1;
+	}
+	gMul = (int)mask;
+	mask = visualList[i].blue_mask;
+	bShift = 0;
+	while (mask && !(mask & 1)) {
+	  ++bShift;
+	  mask >>= 1;
+	}
+	bMul = (int)mask;
+      }
+      break;
+    }
+  }
+  XFree(visualList);
+
+  // allocate a color cube
+  if (!trueColor) {
+    colormap = win->getColormap();
+
+    // set colors in private colormap
+    if (installCmap) {
+      for (numColors = 6; numColors >= 2; --numColors) {
+	m = numColors * numColors * numColors;
+	if (XAllocColorCells(display, colormap, False, NULL, 0, colors, m))
+	  break;
+      }
+      if (numColors >= 2) {
+	m = numColors * numColors * numColors;
+	xcolors = (XColor *)gmalloc(m * sizeof(XColor));
+	n = 0;
+	for (r = 0; r < numColors; ++r) {
+	  for (g = 0; g < numColors; ++g) {
+	    for (b = 0; b < numColors; ++b) {
+	      xcolors[n].pixel = colors[n];
+	      xcolors[n].red = (r * 65535) / (numColors - 1);
+	      xcolors[n].green = (g * 65535) / (numColors - 1);
+	      xcolors[n].blue = (b * 65535) / (numColors - 1);
+	      xcolors[n].flags = DoRed | DoGreen | DoBlue;
+	      ++n;
+	    }
+	  }
+	}
+	XStoreColors(display, colormap, xcolors, m);
+	gfree(xcolors);
+      } else {
+	numColors = 1;
+	colors[0] = BlackPixel(display, screenNum);
+	colors[1] = WhitePixel(display, screenNum);
+      }
+
+    // allocate colors in shared colormap
+    } else {
+      if (rgbCubeSize > maxRGBCube)
+	rgbCubeSize = maxRGBCube;
+      ok = gFalse;
+      for (numColors = rgbCubeSize; numColors >= 2; --numColors) {
+	ok = gTrue;
+	n = 0;
+	for (r = 0; r < numColors && ok; ++r) {
+	  for (g = 0; g < numColors && ok; ++g) {
+	    for (b = 0; b < numColors && ok; ++b) {
+	      if (n == 0) {
+		colors[n++] = BlackPixel(display, screenNum);
+	      } else {
+		xcolor.red = (r * 65535) / (numColors - 1);
+		xcolor.green = (g * 65535) / (numColors - 1);
+		xcolor.blue = (b * 65535) / (numColors - 1);
+		if (XAllocColor(display, colormap, &xcolor))
+		  colors[n++] = xcolor.pixel;
+		else
+		  ok = gFalse;
+	      }
+	    }
+	  }
+	}
+	if (ok)
+	  break;
+	XFreeColors(display, colormap, &colors[1], n-1, 0);
+      }
+      if (!ok) {
+	numColors = 1;
+	colors[0] = BlackPixel(display, screenNum);
+	colors[1] = WhitePixel(display, screenNum);
       }
     }
-    if (ok)
-      break;
-    XFreeColors(display, colormap, colors, n, 0);
-  }
-  if (!ok) {
-    numColors = 1;
-    colors[0] = BlackPixel(display, screenNum);
-    colors[1] = WhitePixel(display, screenNum);
   }
 
   // allocate GCs
-  gcValues.foreground = colors[0];
+  gcValues.foreground = BlackPixel(display, screenNum);
   gcValues.background = WhitePixel(display, screenNum);
   gcValues.line_width = 0;
   gcValues.line_style = LineSolid;
@@ -507,6 +627,9 @@ XOutputDev::XOutputDev(LTKWindow *win1) {
 
   // empty state stack
   save = NULL;
+
+  // create text object
+  text = new TextPage(gFalse);
 }
 
 XOutputDev::~XOutputDev() {
@@ -517,6 +640,7 @@ XOutputDev::~XOutputDev() {
   XFreeGC(display, paperGC);
   if (clipRegion)
     XDestroyRegion(clipRegion);
+  delete text;
 }
 
 void XOutputDev::startPage(int pageNum, GfxState *state) {
@@ -543,7 +667,7 @@ void XOutputDev::startPage(int pageNum, GfxState *state) {
   flatness = 0;
 
   // reset GCs
-  gcValues.foreground = colors[0];
+  gcValues.foreground = BlackPixel(display, screenNum);
   gcValues.background = WhitePixel(display, screenNum);
   gcValues.line_width = 0;
   gcValues.line_style = LineSolid;
@@ -573,6 +697,13 @@ void XOutputDev::startPage(int pageNum, GfxState *state) {
   XFillRectangle(display, pixmap, paperGC,
 		 0, 0, canvas->getRealWidth(), canvas->getRealHeight());
   canvas->redraw();
+
+  // clear text object
+  text->clear();
+}
+
+void XOutputDev::endPage() {
+  text->coalesce();
 }
 
 void XOutputDev::dump() {
@@ -655,6 +786,7 @@ void XOutputDev::restoreState(GfxState *state) {
 
 void XOutputDev::updateAll(GfxState *state) {
   updateLineAttrs(state, gTrue);
+  updateFlatness(state);
   updateMiterLimit(state);
   updateFillColor(state);
   updateStrokeColor(state);
@@ -750,6 +882,8 @@ void XOutputDev::updateFont(GfxState *state) {
     return;
   }
   state->getFontTransMat(&m11, &m12, &m21, &m22);
+  m11 *= state->getHorizScaling();
+  m21 *= state->getHorizScaling();
   font = fontCache->getFont(gfxFont, m11, m12, m21, m22);
   if (font) {
     XSetFont(display, fillGC, font->getXFont()->fid);
@@ -870,14 +1004,14 @@ void XOutputDev::doClip(GfxState *state, int rule) {
 //
 // Transform points in the path and convert curves to line segments.
 // Builds a set of subpaths and returns the number of subpaths.
-// If <fill> is set, close any unclosed subpaths and activate a kludge
-// for polygon fills:  First, it divides up the subpaths into
+// If <fillHack> is set, close any unclosed subpaths and activate a
+// kludge for polygon fills:  First, it divides up the subpaths into
 // non-overlapping polygons by simply comparing bounding rectangles.
 // Then it connects subaths within a single compound polygon to a single
 // point so that X can fill the polygon (sort of).
 //
 int XOutputDev::convertPath(GfxState *state, XPoint **points, int *size,
-			    int *numPoints, int **lengths, GBool fill) {
+			    int *numPoints, int **lengths, GBool fillHack) {
   GfxPath *path;
   BoundingRect *rects;
   BoundingRect rect;
@@ -894,7 +1028,7 @@ int XOutputDev::convertPath(GfxState *state, XPoint **points, int *size,
     *lengths = (int *)gmalloc(n * sizeof(int));
 
   // allocate bounding rectangles array
-  if (fill) {
+  if (fillHack) {
     if (n < numTmpSubpaths)
       rects = tmpRects;
     else
@@ -914,7 +1048,7 @@ int XOutputDev::convertPath(GfxState *state, XPoint **points, int *size,
     convertSubpath(state, path->getSubpath(i), points, size, numPoints);
 
     // construct bounding rectangle
-    if (fill) {
+    if (fillHack) {
       rects[i].xMin = rects[i].xMax = (*points)[j].x;
       rects[i].yMin = rects[i].yMax = (*points)[j].y;
       for (k = j + 1; k < *numPoints; ++k) {
@@ -930,8 +1064,8 @@ int XOutputDev::convertPath(GfxState *state, XPoint **points, int *size,
     }
 
     // close subpath if necessary
-    if (fill && ((*points)[*numPoints-1].x != (*points)[j].x ||
-		 (*points)[*numPoints-1].y != (*points)[j].y)) {
+    if (fillHack && ((*points)[*numPoints-1].x != (*points)[j].x ||
+		   (*points)[*numPoints-1].y != (*points)[j].y)) {
       addPoint(points, size, numPoints, (*points)[j].x, (*points)[j].y);
     }
 
@@ -939,12 +1073,12 @@ int XOutputDev::convertPath(GfxState *state, XPoint **points, int *size,
     (*lengths)[i] = *numPoints - j;
 
     // leave an extra point for compound fill hack
-    if (fill)
+    if (fillHack)
       addPoint(points, size, numPoints, 0, 0);
   }
 
   // combine compound polygons
-  if (fill) {
+  if (fillHack) {
     i = j = k = 0;
     while (i < n) {
 
@@ -1133,7 +1267,16 @@ void XOutputDev::addPoint(XPoint **points, int *size, int *k, int x, int y) {
   ++(*k);
 }
 
-void XOutputDev::drawChar(GfxState *state, double x, double y, Guchar c) {
+void XOutputDev::beginString(GfxState *state, GString *s) {
+  text->beginString(state, s);
+}
+
+void XOutputDev::endString(GfxState *state) {
+  text->endString();
+}
+
+void XOutputDev::drawChar(GfxState *state, double x, double y,
+			  double dx, double dy, Guchar c) {
   Gushort c1;
   char buf;
   char *p;
@@ -1141,8 +1284,15 @@ void XOutputDev::drawChar(GfxState *state, double x, double y, Guchar c) {
   double x1, y1;
   double tx;
 
+  text->addChar(state, x, y, dx, dy, c);
+
   if (!font)
     return;
+
+  // check for invisible text -- this is used by Acrobat Capture
+  if ((state->getRender() & 3) == 3)
+    return;
+
   state->transform(x, y, &x1, &y1);
   c1 = font->mapChar(c);
   if (c1 <= lastRegularChar) {
@@ -1190,8 +1340,7 @@ void XOutputDev::drawChar(GfxState *state, double x, double y, Guchar c) {
     p = multiChars[c1 - firstMultiChar];
     n = strlen(p);
     tx = gfxFont->getWidth(c);
-    for (i = 1; i < n; ++i)
-      tx -= gfxFont->getWidth(font->revMapChar(p[i]));
+    tx -= gfxFont->getWidth(font->revMapChar(p[n-1]));
     tx = tx * state->getTransformedFontSize() / (double)(n - 1);
     for (i = 0; i < n; ++i) {
       XDrawString(display, pixmap,
@@ -1208,6 +1357,7 @@ void XOutputDev::drawImageMask(GfxState *state, Stream *str,
   XImage *image;
   int x0, y0;			// top left corner of image
   int w0, h0, w1, h1;		// size of image
+  int x2, y2;
   int w2, h2;
   Guint depth;
   double xt, yt, wt, ht;
@@ -1220,7 +1370,6 @@ void XOutputDev::drawImageMask(GfxState *state, Stream *str,
   Gulong color;
   Gulong buf;
   int i, j;
-  int c1, c2;
 
   // get image position and size
   state->transform(0, 0, &xt, &yt);
@@ -1262,7 +1411,7 @@ void XOutputDev::drawImageMask(GfxState *state, Stream *str,
     j = height * ((width + 7) / 8);
     for (i = 0; i < j; ++i)
       str->getChar();
-    goto done;
+    return;
   }
 
   // Bresenham parameters
@@ -1280,12 +1429,26 @@ void XOutputDev::drawImageMask(GfxState *state, Stream *str,
     w2 = canvas->getRealWidth() - x0;
   else
     w2 = w0;
+  if (x0 < 0) {
+    x2 = -x0;
+    w2 += x0;
+    x0 = 0;
+  } else {
+    x2 = 0;
+  }
   if (y0 + h0 > canvas->getRealHeight())
     h2 = canvas->getRealHeight() - y0;
   else
     h2 = h0;
+  if (y0 < 0) {
+    y2 = -y0;
+    h2 += y0;
+    y0 = 0;
+  } else {
+    y2 = 0;
+  }
   XGetSubImage(display, pixmap, x0, y0, w2, h2, (1 << depth) - 1, ZPixmap,
-	       image, 0, 0);
+	       image, x2, y2);
 
   // allocate line buffer
   pixLine = (Guchar *)gmalloc(((width + 7) & ~7) * sizeof(Guchar));
@@ -1380,32 +1543,31 @@ void XOutputDev::drawImageMask(GfxState *state, Stream *str,
   }
 
   // blit the image into the pixmap
-  XPutImage(display, pixmap, fillGC, image, 0, 0, x0, y0, w2, h2);
+  XPutImage(display, pixmap, fillGC, image, x2, y2, x0, y0, w2, h2);
 
   // free memory
   gfree(image->data);
   image->data = NULL;
   XDestroyImage(image);
   gfree(pixLine);
-
-  // if it was an inline image, skip the 'EI' tag
- done:
-  if (inlineImg) {
-    c1 = str->getBaseStream()->getChar();
-    c2 = str->getBaseStream()->getChar();
-    while (!(c1 == 'E' && c2 == 'I') && c2 != EOF) {
-      c1 = c2;
-      c2 = str->getBaseStream()->getChar();
-    }
-  }
 }
 
 inline Gulong XOutputDev::findColor(RGBColor *x, RGBColor *err) {
-  int r, g, b;
   double gray;
+  int r, g, b;
   Gulong pixel;
 
-  if (numColors == 1) {
+  if (trueColor) {
+    r = xoutRound(x->r * rMul);
+    g = xoutRound(x->g * gMul);
+    b = xoutRound(x->b * bMul);
+    pixel = ((Gulong)r << rShift) +
+            ((Gulong)g << gShift) +
+            ((Gulong)b << bShift);
+    err->r = x->r - (double)r / rMul;
+    err->g = x->g - (double)g / gMul;
+    err->b = x->b - (double)b / bMul;
+  } else if (numColors == 1) {
     gray = 0.299 * x->r + 0.587 * x->g + 0.114 * x->b;
     if (gray < 0.5) {
       pixel = colors[0];
@@ -1414,24 +1576,24 @@ inline Gulong XOutputDev::findColor(RGBColor *x, RGBColor *err) {
       err->b = x->b;
     } else {
       pixel = colors[1];
-      err->r = x->r - 255;
-      err->g = x->g - 255;
-      err->b = x->b - 255;
+      err->r = x->r - 1;
+      err->g = x->g - 1;
+      err->b = x->b - 1;
     }
   } else {
-    r = (x->r * (numColors - 1) + 128) >> 8;
-    g = (x->g * (numColors - 1) + 128) >> 8;
-    b = (x->b * (numColors - 1) + 128) >> 8;
+    r = xoutRound(x->r * (numColors - 1));
+    g = xoutRound(x->g * (numColors - 1));
+    b = xoutRound(x->b * (numColors - 1));
     pixel = colors[(r * numColors + g) * numColors + b];
-    err->r = x->r - ((r << 8) - r) / (numColors - 1);
-    err->g = x->g - ((g << 8) - g) / (numColors - 1); 
-    err->b = x->b - ((b << 8) - b) / (numColors - 1);
+    err->r = x->r - (double)r / (numColors - 1);
+    err->g = x->g - (double)g / (numColors - 1); 
+    err->b = x->b - (double)b / (numColors - 1);
   }
   return pixel;
 }
 
 void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
-			   int height, GfxColorSpace *colorSpace,
+			   int height, GfxImageColorMap *colorMap,
 			   GBool inlineImg) {
   XImage *image;
   int x0, y0;			// top left corner of image
@@ -1449,11 +1611,11 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
   Gulong buf, bitMask;
   int bits;
   int nComps, nVals, nBits;
-  Guchar r1, g1, b1;
+  double r1, g1, b1;
+  GfxColor color;
   RGBColor color2, err;
   RGBColor *errRight, *errDown;
   int i, j, k;
-  int c1, c2;
 
   // get image position and size
   state->transform(0, 0, &xt, &yt);
@@ -1488,9 +1650,9 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
 
   // set up
   str->reset();
-  nComps = colorSpace->getNumComponents();
+  nComps = colorMap->getNumPixelComps();
   nVals = width * nComps;
-  nBits = colorSpace->getBits();
+  nBits = colorMap->getBits();
   dither = nComps > 1 || nBits > 1;
 
   // check for tiny (zero width or height) images
@@ -1498,7 +1660,7 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
     k = height * ((nVals * nBits + 7) / 8);
     for (i = 0; i < k; ++i)
       str->getChar();
-    goto done;
+    return;
   }
 
   // Bresenham parameters
@@ -1603,7 +1765,10 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
 
 	// draw image pixel
 	if (dx > 0) {
-	  colorSpace->getRGB(&pixLine[k], &r1, &g1, &b1);
+	  colorMap->getColor(&pixLine[k], &color);
+	  r1 = color.getR();
+	  g1 = color.getG();
+	  b1 = color.getB();
 	  if (dither) {
 	    pixel = 0;
 	  } else {
@@ -1615,21 +1780,24 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
 	  if (dx == 1 && dy == 1) {
 	    if (dither) {
 	      color2.r = r1 + errRight[0].r + errDown[x].r;
-	      if (color2.r > 255)
-		color2.r = 255;
+	      if (color2.r > 1)
+		color2.r = 1;
+	      else if (color2.r < 0)
+		color2.r = 0;
 	      color2.g = g1 + errRight[0].g + errDown[x].g;
-	      if (color2.g > 255)
-		color2.g = 255;
+	      if (color2.g > 1)
+		color2.g = 1;
+	      else if (color2.g < 0)
+		color2.g = 0;
 	      color2.b = b1 + errRight[0].b + errDown[x].b;
-	      if (color2.b > 255)
-		color2.b = 255;
+	      if (color2.b > 1)
+		color2.b = 1;
+	      else if (color2.b < 0)
+		color2.b = 0;
 	      pixel = findColor(&color2, &err);
-	      errRight[0].r = err.r / 2;
-	      errRight[0].g = err.g / 2;
-	      errRight[0].b = err.b / 2;
-	      errDown[x].r = err.r - errRight[0].r;
-	      errDown[x].g = err.g - errRight[0].g;
-	      errDown[x].b = err.b - errRight[0].b;
+	      errRight[0].r = errDown[x].r = err.r / 2;
+	      errRight[0].g = errDown[x].g = err.g / 2;
+	      errRight[0].b = errDown[x].b = err.b / 2;
 	    }
 	    if (rotate)
 	      XPutPixel(image, y, x, pixel);
@@ -1641,23 +1809,29 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
 		if (dither) {
 		  color2.r = r1 + errRight[iy].r +
 		    errDown[xFlip ? x - ix : x + ix].r;
-		  if (color2.r > 255)
-		    color2.r = 255;
+		  if (color2.r > 1)
+		    color2.r = 1;
+		  else if (color2.r < 0)
+		    color2.r = 0;
 		  color2.g = g1 + errRight[iy].g +
 		    errDown[xFlip ? x - ix : x + ix].g;
-		  if (color2.g > 255)
-		    color2.g = 255;
+		  if (color2.g > 1)
+		    color2.g = 1;
+		  else if (color2.g < 0)
+		    color2.g = 0;
 		  color2.b = b1 + errRight[iy].b +
 		    errDown[xFlip ? x - ix : x + ix].b;
-		  if (color2.b > 255)
-		    color2.b = 255;
+		  if (color2.b > 1)
+		    color2.b = 1;
+		  else if (color2.b < 0)
+		    color2.b = 0;
 		  pixel = findColor(&color2, &err);
-		  errRight[iy].r = err.r / 2;
-		  errRight[iy].g = err.g / 2;
-		  errRight[iy].b = err.b / 2;
-		  errDown[xFlip ? x - ix : x + ix].r = err.r - errRight[iy].r;
-		  errDown[xFlip ? x - ix : x + ix].g = err.g - errRight[iy].g;
-		  errDown[xFlip ? x - ix : x + ix].b = err.b - errRight[iy].b;
+		  errRight[iy].r = errDown[xFlip ? x - ix : x + ix].r =
+		    err.r / 2;
+		  errRight[iy].g = errDown[xFlip ? x - ix : x + ix].g =
+		    err.g / 2;
+		  errRight[iy].b = errDown[xFlip ? x - ix : x + ix].b =
+		    err.b / 2;
 		}
 		if (rotate)
 		  XPutPixel(image, yFlip ? y - iy : y + iy,
@@ -1695,17 +1869,6 @@ void XOutputDev::drawImage(GfxState *state, Stream *str, int width,
   gfree(pixLine);
   gfree(errRight);
   gfree(errDown);
-
-  // if it was an inline image, skip the 'EI' tag
- done:
-  if (inlineImg) {
-    c1 = str->getBaseStream()->getChar();
-    c2 = str->getBaseStream()->getChar();
-    while (!(c1 == 'E' && c2 == 'I') && c2 != EOF) {
-      c1 = c2;
-      c2 = str->getBaseStream()->getChar();
-    }
-  }
 }
 
 Gulong XOutputDev::findColor(GfxColor *color) {
@@ -1713,7 +1876,14 @@ Gulong XOutputDev::findColor(GfxColor *color) {
   double gray;
   Gulong pixel;
 
-  if (numColors == 1) {
+  if (trueColor) {
+    r = xoutRound(color->getR() * rMul);
+    g = xoutRound(color->getG() * gMul);
+    b = xoutRound(color->getB() * bMul);
+    pixel = ((Gulong)r << rShift) +
+            ((Gulong)g << gShift) +
+            ((Gulong)b << bShift);
+  } else if (numColors == 1) {
     gray = color->getGray();
     if (gray < 0.5)
       pixel = colors[0];
@@ -1723,16 +1893,41 @@ Gulong XOutputDev::findColor(GfxColor *color) {
     r = xoutRound(color->getR() * (numColors - 1));
     g = xoutRound(color->getG() * (numColors - 1));
     b = xoutRound(color->getB() * (numColors - 1));
+#if 0 //~ this makes things worse as often as better
     // even a very light color shouldn't map to white
     if (r == numColors - 1 && g == numColors - 1 && b == numColors - 1) {
-      if (color->getR() < 0.99)
+      if (color->getR() < 0.95)
 	--r;
-      if (color->getG() < 0.99)
+      if (color->getG() < 0.95)
 	--g;
-      if (color->getB() < 0.99)
+      if (color->getB() < 0.95)
 	--b;
     }
+#endif
     pixel = colors[(r * numColors + g) * numColors + b];
   }
   return pixel;
+}
+
+GBool XOutputDev::findText(char *s, GBool top, GBool bottom,
+			   int *xMin, int *yMin, int *xMax, int *yMax) {
+  double xMin1, yMin1, xMax1, yMax1;
+  
+  xMin1 = (double)*xMin;
+  yMin1 = (double)*yMin;
+  xMax1 = (double)*xMax;
+  yMax1 = (double)*yMax;
+  if (text->findText(s, top, bottom, &xMin1, &yMin1, &xMax1, &yMax1)) {
+    *xMin = xoutRound(xMin1);
+    *xMax = xoutRound(xMax1);
+    *yMin = xoutRound(yMin1);
+    *yMax = xoutRound(yMax1);
+    return gTrue;
+  }
+  return gFalse;
+}
+
+GString *XOutputDev::getText(int xMin, int yMin, int xMax, int yMax) {
+  return text->getText((double)xMin, (double)yMin,
+		       (double)xMax, (double)yMax);
 }

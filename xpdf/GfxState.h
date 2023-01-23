@@ -56,39 +56,96 @@ enum GfxColorMode {
 class GfxColorSpace {
 public:
 
-  // Constructor.
-  GfxColorSpace(int bits1, Object *colorSpace, Object *decode);
+  // Construct a colorspace.
+  GfxColorSpace(Object *colorSpace);
+
+  // Construct a simple colorspace: DeviceGray, DeviceCMYK, or
+  // DeviceRGB.
+  GfxColorSpace(GfxColorMode mode1);
 
   // Destructor.
   ~GfxColorSpace();
 
+  // Copy.
+  GfxColorSpace *copy() { return new GfxColorSpace(this); }
+
   // Is color space valid?
   GBool isOk() { return ok; }
 
-  // Get stream decoding info.
-  int getNumComponents() { return numComponents; }
-  int getBits() { return bits; }
-
-  // Get color mode.
+  // Get the color mode.
   GfxColorMode getMode() { return mode; }
+
+  // Get number of components in pixels of this colorspace.
+  int getNumPixelComps() { return indexed ? 1 : numComps; }
+
+  // Get number of components in colors of this colorspace.
+  int getNumColorComps() { return numComps; }
+
+  // Return 1 if colorspace is indexed.
   GBool isIndexed() { return indexed; }
 
-  // Convert an input value to a color.
-  void getRGB(Guchar x[4], Guchar *r, Guchar *g, Guchar *b);
-  void getGray(Guchar x[4], Guchar *gray);
+  // Get lookup table (only for indexed colrospaces).
+  int getIndexHigh() { return indexHigh; }
+  Guchar *getLookupVal(int i) { return lookup[i]; }
 
-  // Get color corresponding to index.
-  Guchar *lookupIndex(int i) { return lookup[i]; }
+  // Convert a pixel to a color.
+  void getColor(double x[4], GfxColor *color);
 
 private:
 
   GfxColorMode mode;		// color mode
-  GBool indexed;		// use lookup table?
-  int bits;			// bits per component
-  int numComponents;		// number of components in input values
-  int lookupComponents;		// number of components in lookup table
-  Guchar (*lookup)[4];		// lookup table
+  GBool indexed;		// set for indexed colorspaces
+  int numComps;			// number of components in colors
+  int indexHigh;		// max pixel for indexed colorspace
+  Guchar (*lookup)[4];		// lookup table (only for indexed
+				//   colorspaces)
   GBool ok;			// is color space valid?
+
+  GfxColorSpace(GfxColorSpace *colorSpace);
+  void setMode(Object *colorSpace);
+};
+
+//------------------------------------------------------------------------
+// GfxImageColorMap
+//------------------------------------------------------------------------
+
+class GfxImageColorMap {
+public:
+
+  // Constructor.
+  GfxImageColorMap(int bits1, Object *decode, GfxColorSpace *colorSpace1);
+
+  // Destructor.
+  ~GfxImageColorMap();
+
+  // Is color map valid?
+  GBool isOk() { return ok; }
+
+  // Get the color space.
+  GfxColorSpace *getColorSpace() { return colorSpace; }
+
+  // Get stream decoding info.
+  int getNumPixelComps() { return colorSpace->getNumPixelComps(); }
+  int getBits() { return bits; }
+
+  // Get decode table.
+  double getDecodeLow(int i) { return decodeLow[i]; }
+  double getDecodeHigh(int i) { return decodeLow[i] + decodeRange[i]; }
+
+  // Convert a pixel to a color.
+  void getColor(Guchar x[4], GfxColor *color);
+
+private:
+
+  GfxColorSpace *colorSpace;	// the image colorspace
+  int bits;			// bits per component
+  int maxPixel;			// max pixel value
+  int decodeComps;		// number of components in decode array
+  GBool simpleDecode;		// set if decode range is 0-1
+  GBool indexDecode;		// set if decode range is 0 - 2^n-1
+  double decodeLow[4];		// minimum values for each component
+  double decodeRange[4];	// max - min value for each component
+  GBool ok;
 };
 
 //------------------------------------------------------------------------
@@ -149,9 +206,13 @@ public:
   ~GfxPath();
 
   // Copy.
-  GfxPath *copy() { return new GfxPath(subpaths, n, size); }
+  GfxPath *copy()
+    { return new GfxPath(justMoved, firstX, firstY, subpaths, n, size); }
 
-  // Is the path non-empty, i.e., is there a current point?
+  // Is there a current point?
+  GBool isCurPt() { return n > 0 || justMoved; }
+
+  // Is the path non-empty, i.e., is there at least one segment?
   GBool isPath() { return n > 0; }
 
   // Get subpaths.
@@ -162,27 +223,29 @@ public:
   double getLastX() { return subpaths[n-1]->getLastX(); }
   double getLastY() { return subpaths[n-1]->getLastY(); }
 
-  // Move the current point, i.e., start a new subpath.
+  // Move the current point.
   void moveTo(double x, double y);
 
   // Add a segment to the last subpath.
-  void lineTo(double x, double y) { subpaths[n-1]->lineTo(x, y); }
+  void lineTo(double x, double y);
 
   // Add a Bezier curve to the last subpath
   void curveTo(double x1, double y1, double x2, double y2,
-	       double x3, double y3)
-    { subpaths[n-1]->curveTo(x1, y1, x2, y2, x3, y3); }
+	       double x3, double y3);
 
   // Close the last subpath.
   void close() { subpaths[n-1]->close(); }
 
 private:
 
+  GBool justMoved;		// set if a new subpath was just started
+  double firstX, firstY;	// first point in new subpath
   GfxSubpath **subpaths;	// subpaths
   int n;			// number of subpaths
   int size;			// size of subpaths array
 
-  GfxPath(GfxSubpath **subpaths1, int n1, int size1);
+  GfxPath(GBool justMoved1, double firstX1, double firstY1,
+	  GfxSubpath **subpaths1, int n1, int size1);
 };
 
 //------------------------------------------------------------------------
@@ -195,7 +258,7 @@ public:
   // Construct a default GfxState, for a device with resolution <dpi>,
   // page box (<x1>,<y1>)-(<x2>,<y2>), page rotation <rotate>, and
   // coordinate system specified by <upsideDown>.
-  GfxState(int dpi, int x1a, int y1a, int x2a, int y2a, int rotate,
+  GfxState(int dpi, int px1a, int py1a, int px2a, int py2a, int rotate,
 	   GBool upsideDown);
 
   // Destructor.
@@ -206,10 +269,10 @@ public:
 
   // Accessors.
   double *getCTM() { return ctm; }
-  int getX1() { return x1; }
-  int getY1() { return y1; }
-  int getX2() { return x2; }
-  int getY2() { return y2; }
+  int getX1() { return px1; }
+  int getY1() { return py1; }
+  int getX2() { return px2; }
+  int getY2() { return py2; }
   int getPageWidth() { return pageWidth; }
   int getPageHeight() { return pageHeight; }
   GfxColor *getFillColor() { return &fillColor; }
@@ -236,7 +299,8 @@ public:
   double getLineX() { return lineX; }
   double getLineY() { return lineY; }
 
-  // Is there a current point?
+  // Is there a current point/path?
+  GBool isCurPt() { return path->isCurPt(); }
   GBool isPath() { return path->isPath(); }
 
   // Transforms.
@@ -273,6 +337,12 @@ public:
     { strokeColor.setCMYK(c, m, y, k); }
   void setStrokeRGB(double r, double g, double b)
     { strokeColor.setRGB(r, g, b); }
+  void setFillColorSpace(GfxColorSpace *colorSpace);
+  void setStrokeColorSpace(GfxColorSpace *colorSpace);
+  void setFillColor(double x[4])
+    { fillColorSpace->getColor(x, &fillColor); }
+  void setStrokeColor(double x[4])
+    { strokeColorSpace->getColor(x, &strokeColor); }
   void setLineWidth(double width)
     { lineWidth = width; }
   void setLineDash(double *dash, int length, double start);
@@ -291,7 +361,7 @@ public:
   void setWordSpace(double space)
     { wordSpace = space; }
   void setHorizScaling(double scale)
-    { horizScaling = scale; }
+    { horizScaling = 0.01 * scale; }
   void setLeading(double leading1)
     { leading = leading1; }
   void setRise(double rise1)
@@ -319,13 +389,16 @@ public:
   // Push/pop GfxState on/off stack.
   GfxState *save();
   GfxState *restore();
+  GBool hasSaves() { return saved != NULL; }
 
 private:
 
   double ctm[6];		// coord transform matrix
-  int x1, y1, x2, y2;		// page corners (user coords)
+  int px1, py1, px2, py2;	// page corners (user coords)
   int pageWidth, pageHeight;	// page size (pixels)
 
+  GfxColorSpace *fillColorSpace;   // fill color space
+  GfxColorSpace *strokeColorSpace; // stroke color space
   GfxColor fillColor;		// fill color
   GfxColor strokeColor;		// stroke color
 

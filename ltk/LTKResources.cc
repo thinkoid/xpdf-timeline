@@ -18,7 +18,7 @@
 #include <X11/Xutil.h>
 #include <gtypes.h>
 #include <GString.h>
-#include <fileNames.h>
+#include <gfile.h>
 #include <LTKConfig.h>
 #include <LTKMisc.h>
 #include <LTKResources.h>
@@ -96,6 +96,29 @@ int ltkGetIntResource(XrmDatabase db, GString *appName,
     strncpy(s, val.addr, n);
     s[n] = '\0';
     ret = atoi(s);
+  } else {
+    ret = def;
+  }
+  delete inst;
+  return ret;
+}
+
+GBool ltkGetBoolResource(XrmDatabase db, GString *appName,
+			 char *instName, GBool def) {
+  GString *inst = appName->copy()->append(".")->append(instName);
+  XrmValue val;
+  char *resType[20];
+  char *s;
+  GBool ret;
+
+  if (XrmGetResource(db, inst->getCString(), inst->getCString(),
+		     resType, &val)) {
+    s = (char *)val.addr;
+    ret =  ((s[0] == 'o' || s[0] == 'O') && (s[1] == 'n' || s[1] == 'N')) ||
+	   ((s[0] == 't' || s[0] == 'T') && (s[1] == 'r' || s[1] == 'R') &&
+	    (s[2] == 'u' || s[2] == 'U') && (s[3] == 'e' || s[3] == 'E')) ||
+	   ((s[0] == 'y' || s[0] == 'Y') && (s[1] == 'e' || s[1] == 'E') &&
+	    (s[2] == 's' || s[2] == 'S'));
   } else {
     ret = def;
   }
