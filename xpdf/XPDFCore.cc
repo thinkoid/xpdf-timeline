@@ -2,7 +2,7 @@
 //
 // XPDFCore.cc
 //
-// Copyright 2002 Glyph & Cog, LLC
+// Copyright 2002-2003 Glyph & Cog, LLC
 //
 //========================================================================
 
@@ -14,6 +14,7 @@
 
 #include <X11/keysym.h>
 #include <X11/cursorfont.h>
+#include <string.h>
 #include "gmem.h"
 #include "GString.h"
 #include "GList.h"
@@ -101,6 +102,7 @@ static int zoomDPI[maxZoom - minZoom + 1] = {
 
 GString *XPDFCore::currentSelection = NULL;
 XPDFCore *XPDFCore::currentSelectionOwner = NULL;
+Atom XPDFCore::targetsAtom;
 
 //------------------------------------------------------------------------
 // XPDFCore
@@ -116,6 +118,7 @@ XPDFCore::XPDFCore(Widget shellA, Widget parentWidgetA,
   parentWidget = parentWidgetA;
   display = XtDisplay(parentWidget);
   screenNum = XScreenNumberOfScreen(XtScreen(parentWidget));
+  targetsAtom = XInternAtom(display, "TARGETS", False);
 
   paperColor = paperColorA;
   fullScreen = fullScreenA;
@@ -217,18 +220,6 @@ XPDFCore::~XPDFCore() {
   if (drawAreaGC) {
     XFreeGC(display, drawAreaGC);
   }
-  if (drawArea) {
-    XtDestroyWidget(drawArea);
-  }
-  if (drawAreaFrame) {
-    XtDestroyWidget(drawAreaFrame);
-  }
-  if (vScrollBar) {
-    XtDestroyWidget(vScrollBar);
-  }
-  if (hScrollBar) {
-    XtDestroyWidget(hScrollBar);
-  }
   if (scrolledWin) {
     XtDestroyWidget(scrolledWin);
   }
@@ -275,6 +266,74 @@ int XPDFCore::loadFile(GString *fileName, GString *ownerPassword,
 	return errEncrypted;
       }
       newDoc = new PDFDoc(fileName->copy(), password, password);
+      if (newDoc->isOk()) {
+	break;
+      }
+      err = newDoc->getErrorCode();
+      delete newDoc;
+      if (err != errEncrypted) {
+	setCursor(None);
+	return err;
+      }
+      again = gTrue;
+    }
+  }
+
+  // replace old document
+  if (doc) {
+    delete doc;
+  }
+  doc = newDoc;
+  if (out) {
+    out->startDoc(doc->getXRef());
+  }
+
+  // nothing displayed yet
+  page = -99;
+
+  // save the modification time
+  modTime = getModTime(doc->getFileName()->getCString());
+
+  // update the parent window
+  if (updateCbk) {
+    (*updateCbk)(updateCbkData, doc->getFileName(), -1,
+		 doc->getNumPages(), NULL);
+  }
+
+  // back to regular cursor
+  setCursor(None);
+
+  return errNone;
+}
+
+int XPDFCore::loadFile(BaseStream *stream, GString *ownerPassword,
+		       GString *userPassword) {
+  PDFDoc *newDoc;
+  GString *password;
+  GBool again;
+  int err;
+
+  // busy cursor
+  setCursor(busyCursor);
+
+  // open the PDF file
+  newDoc = new PDFDoc(stream, ownerPassword, userPassword);
+  if (!newDoc->isOk()) {
+    err = newDoc->getErrorCode();
+    delete newDoc;
+    if (err != errEncrypted || !reqPasswordCbk) {
+      setCursor(None);
+      return err;
+    }
+
+    // try requesting a password
+    again = ownerPassword != NULL || userPassword != NULL;
+    while (1) {
+      if (!(password = (*reqPasswordCbk)(reqPasswordCbkData, again))) {
+	setCursor(None);
+	return errEncrypted;
+      }
+      newDoc = new PDFDoc(stream, password, password);
       if (newDoc->isOk()) {
 	break;
       }
@@ -478,6 +537,15 @@ void XPDFCore::displayPage(int pageA, int zoomA, int rotateA,
     redrawRectangle(scrollX, scrollY, drawAreaWidth, drawAreaHeight);
   }
 
+  // allocate new GCs
+  gcValues.foreground = BlackPixel(display, screenNum) ^
+                        WhitePixel(display, screenNum);
+  gcValues.function = GXxor;
+  selectGC = XCreateGC(display, out->getPixmap(),
+		       GCForeground | GCFunction, &gcValues);
+  highlightGC = XCreateGC(display, out->getPixmap(),
+		       GCForeground | GCFunction, &gcValues);
+
 
   // add to history
   if (addToHist) {
@@ -488,7 +556,11 @@ void XPDFCore::displayPage(int pageA, int zoomA, int rotateA,
     if (h->fileName) {
       delete h->fileName;
     }
-    h->fileName = doc->getFileName()->copy();
+    if (doc->getFileName()) {
+      h->fileName = doc->getFileName()->copy();
+    } else {
+      h->fileName = NULL;
+    }
     h->page = page;
     if (historyBLen < xpdfHistorySize) {
       ++historyBLen;
@@ -500,15 +572,6 @@ void XPDFCore::displayPage(int pageA, int zoomA, int rotateA,
   if (updateCbk) {
     (*updateCbk)(updateCbkData, NULL, page, -1, "");
   }
-
-  // allocate new GCs
-  gcValues.foreground = BlackPixel(display, screenNum) ^
-                        WhitePixel(display, screenNum);
-  gcValues.function = GXxor;
-  selectGC = XCreateGC(display, out->getPixmap(),
-		       GCForeground | GCFunction, &gcValues);
-  highlightGC = XCreateGC(display, out->getPixmap(),
-		       GCForeground | GCFunction, &gcValues);
 
   // back to regular cursor
   setCursor(None);
@@ -925,15 +988,31 @@ Boolean XPDFCore::convertSelectionCbk(Widget widget, Atom *selection,
 				      Atom *target, Atom *type,
 				      XtPointer *value, unsigned long *length,
 				      int *format) {
-  if (*target != XA_STRING) {
-    return False;
+  Atom *array;
+
+  // send back a list of supported conversion targets
+  if (*target == targetsAtom) {
+    if (!(array = (Atom *)XtMalloc(sizeof(Atom)))) {
+      return False;
+    }
+    array[0] = XA_STRING;
+    *value = (XtPointer)array;
+    *type = XA_ATOM;
+    *format = 32;
+    *length = 1;
+    return True;
+
+  // send the selected text
+  } else if (*target == XA_STRING) {
+    //~ for multithreading: need a mutex here
+    *value = XtNewString(currentSelection->getCString());
+    *length = currentSelection->getLength();
+    *type = XA_STRING;
+    *format = 8; // 8-bit elements
+    return True;
   }
-  //~ for multithreading: need a mutex here
-  *value = XtNewString(currentSelection->getCString());
-  *length = currentSelection->getLength();
-  *type = XA_STRING;
-  *format = 8; // 8-bit elements
-  return True;
+
+  return False;
 }
 
 GBool XPDFCore::getSelection(int *xMin, int *yMin, int *xMax, int *yMax) {
@@ -962,7 +1041,7 @@ GString *XPDFCore::extractText(int pageNum,
   if (!doc->okToCopy()) {
     return NULL;
   }
-  textOut = new TextOutputDev(NULL, gFalse, gFalse, gFalse);
+  textOut = new TextOutputDev(NULL, gTrue, gFalse, gFalse);
   if (!textOut->isOk()) {
     delete textOut;
     return NULL;
@@ -1193,26 +1272,9 @@ void XPDFCore::doAction(LinkAction *action) {
 void XPDFCore::runCommand(GString *cmdFmt, GString *arg) {
   GString *cmd;
   char *s;
-  int i;
 
   if ((s = strstr(cmdFmt->getCString(), "%s"))) {
-    cmd = arg->copy();
-    // filter out any quote marks (' or ") to avoid a potential
-    // security hole
-    i = 0;
-    while (i < cmd->getLength()) {
-      if (cmd->getChar(i) == '"') {
-	cmd->del(i);
-	cmd->insert(i, "%22");
-	i += 3;
-      } else if (cmd->getChar(i) == '\'') {
-	cmd->del(i);
-	cmd->insert(i, "%27");
-	i += 3;
-      } else {
-	++i;
-      }
-    }
+    cmd = mungeURL(arg);
     cmd->insert(0, cmdFmt->getCString(),
 		s - cmdFmt->getCString());
     cmd->append(s + 2);
@@ -1228,6 +1290,31 @@ void XPDFCore::runCommand(GString *cmdFmt, GString *arg) {
 #endif
   system(cmd->getCString());
   delete cmd;
+}
+
+// Escape any characters in a URL which might cause problems when
+// calling system().
+GString *XPDFCore::mungeURL(GString *url) {
+  static char *allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                         "abcdefghijklmnopqrstuvwxyz"
+                         "0123456789"
+                         "-_.~/?:@&=+,#%";
+  GString *newURL;
+  char c;
+  char buf[4];
+  int i;
+
+  newURL = new GString();
+  for (i = 0; i < url->getLength(); ++i) {
+    c = url->getChar(i);
+    if (strchr(allowed, c)) {
+      newURL->append(c);
+    } else {
+      sprintf(buf, "%%%02x", c & 0xff);
+      newURL->append(buf);
+    }
+  }
+  return newURL;
 }
 
 
@@ -1276,7 +1363,7 @@ void XPDFCore::find(char *s) {
   }
 
   // search following pages
-  textOut = new TextOutputDev(NULL, gFalse, gFalse, gFalse);
+  textOut = new TextOutputDev(NULL, gTrue, gFalse, gFalse);
   if (!textOut->isOk()) {
     delete textOut;
     goto done;
@@ -1472,6 +1559,7 @@ void XPDFCore::resizeCbk(Widget widget, XtPointer ptr, XtPointer callData) {
   Arg args[2];
   int n;
   Dimension w, h;
+  int oldScrollX, oldScrollY;
 
   n = 0;
   XtSetArg(args[n], XmNwidth, &w); ++n;
@@ -1484,7 +1572,13 @@ void XPDFCore::resizeCbk(Widget widget, XtPointer ptr, XtPointer callData) {
     core->displayPage(core->page, core->zoom, core->rotate,
 		      gFalse, gFalse);
   } else {
+    oldScrollX = core->scrollX;
+    oldScrollY = core->scrollY;
     core->updateScrollBars();
+    if (core->scrollX != oldScrollX || core->scrollY != oldScrollY) {
+      core->redrawRectangle(core->scrollX, core->scrollY,
+			    core->drawAreaWidth, core->drawAreaHeight);
+    }
   }
 }
 
@@ -1857,7 +1951,7 @@ void XPDFCore::doErrorDialog(char *title, GString *msg) {
 
 GBool XPDFCore::doDialog(int type, GBool hasCancel,
 			 char *title, GString *msg) {
-  Widget dialog;
+  Widget dialog, scroll, text;
   XtAppContext appContext;
   Arg args[20];
   int n;
@@ -1869,11 +1963,31 @@ GBool XPDFCore::doDialog(int type, GBool hasCancel,
   XtSetArg(args[n], XmNdialogStyle, XmDIALOG_PRIMARY_APPLICATION_MODAL); ++n;
   s1 = XmStringCreateLocalized(title);
   XtSetArg(args[n], XmNdialogTitle, s1); ++n;
-  s2 = XmStringCreateLocalized(msg->getCString());
-  XtSetArg(args[n], XmNmessageString, s2); ++n;
+  s2 = NULL; // make gcc happy
+  if (msg->getLength() <= 80) {
+    s2 = XmStringCreateLocalized(msg->getCString());
+    XtSetArg(args[n], XmNmessageString, s2); ++n;
+  }
   dialog = XmCreateMessageDialog(drawArea, "questionDialog", args, n);
   XmStringFree(s1);
-  XmStringFree(s2);
+  if (msg->getLength() <= 80) {
+    XmStringFree(s2);
+  } else {
+    n = 0;
+    XtSetArg(args[n], XmNscrollingPolicy, XmAUTOMATIC); ++n;
+    if (drawAreaWidth > 300) {
+      XtSetArg(args[n], XmNwidth, drawAreaWidth - 100); ++n;
+    }
+    scroll = XmCreateScrolledWindow(dialog, "scroll", args, n);
+    XtManageChild(scroll);
+    n = 0;
+    XtSetArg(args[n], XmNeditable, False); ++n;
+    XtSetArg(args[n], XmNeditMode, XmMULTI_LINE_EDIT); ++n;
+    XtSetArg(args[n], XmNvalue, msg->getCString()); ++n;
+    XtSetArg(args[n], XmNshadowThickness, 0); ++n;
+    text = XmCreateText(scroll, "text", args, n);
+    XtManageChild(text);
+  }
   XtUnmanageChild(XmMessageBoxGetChild(dialog, XmDIALOG_HELP_BUTTON));
   XtAddCallback(dialog, XmNokCallback,
 		&dialogOkCbk, (XtPointer)this);
