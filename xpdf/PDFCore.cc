@@ -673,25 +673,41 @@ void PDFCore::scrollToRightEdge() {
 }
 
 void PDFCore::scrollToTopEdge() {
-  scrollTo(state->getScrollX(), tileMap->getPageTopY(tileMap->getFirstPage()));
+  scrollTo(state->getScrollX(),
+	   tileMap->getPageTopY(tileMap->getFirstPage()));
 }
 
 void PDFCore::scrollToBottomEdge() {
-  int horizMax, vertMax;
-
-  tileMap->getScrollLimits(&horizMax, &vertMax);
-  scrollTo(state->getScrollX(), vertMax - state->getWinH());
+  scrollTo(state->getScrollX(),
+	   tileMap->getPageBottomY(tileMap->getLastPage()));
 }
 
 void PDFCore::scrollToTopLeft() {
-  scrollTo(0, tileMap->getPageTopY(tileMap->getFirstPage()));
+  scrollTo(tileMap->getPageLeftX(tileMap->getFirstPage()),
+	   tileMap->getPageTopY(tileMap->getFirstPage()));
 }
 
 void PDFCore::scrollToBottomRight() {
-  int horizMax, vertMax;
+  scrollTo(tileMap->getPageRightX(tileMap->getLastPage()),
+	   tileMap->getPageBottomY(tileMap->getLastPage()));
+}
 
-  tileMap->getScrollLimits(&horizMax, &vertMax);
-  scrollTo(horizMax - state->getWinW(), vertMax - state->getWinH());
+void PDFCore::scrollToCentered(int page, double x, double y) {
+  int wx, wy, sx, sy;
+
+  startUpdate();
+
+  // scroll to the requested page
+  state->setScrollPosition(page, tileMap->getPageLeftX(page),
+			   tileMap->getPageTopY(page));
+
+  // scroll the requested point to the center of the window
+  cvtUserToWindow(page, x, y, &wx, &wy);
+  sx = state->getScrollX() + wx - state->getWinW() / 2;
+  sy = state->getScrollY() + wy - state->getWinH() / 2;
+  state->setScrollPosition(page, sx, sy);
+
+  finishUpdate(gTrue, gFalse);
 }
 
 void PDFCore::setZoom(double zoom) {
@@ -897,6 +913,10 @@ void PDFCore::setSelectMode(SelectMode mode) {
     selectMode = mode;
     clearSelection();
   }
+}
+
+SplashColorPtr PDFCore::getSelectionColor() {
+  return state->getSelectColor();
 }
 
 void PDFCore::setSelectionColor(SplashColor color) {
@@ -1646,6 +1666,11 @@ FormField *PDFCore::getFormField(int idx) {
     return NULL;
   }
   return doc->getCatalog()->getForm()->getField(idx);
+}
+
+GBool PDFCore::overText(int pg, double x, double y) {
+  loadText(pg);
+  return text->checkPointInside(x, y);
 }
 
 void PDFCore::forceRedraw() {
